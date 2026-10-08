@@ -4,6 +4,7 @@ import { pool } from '../db';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { requireRole } from '../middleware/tenant';
 import { Roles } from '@rota/shared';
+import { addActivity } from '../services/activity';
 
 const router = Router();
 
@@ -96,6 +97,13 @@ router.post('/accept', async (req: AuthRequest, res, next) => {
         'INSERT INTO team_memberships (team_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT (team_id, user_id) DO NOTHING',
         [invite.team_id, req.user!.id, invite.role]
       );
+
+      await addActivity(client, {
+        teamId: invite.team_id,
+        actorId: req.user!.id,
+        type: 'MEMBER_JOINED',
+        payload: { email: invite.email, role: invite.role },
+      });
 
       await client.query('UPDATE invitations SET accepted_at = NOW() WHERE id = $1', [invite.id]);
       await client.query('COMMIT');

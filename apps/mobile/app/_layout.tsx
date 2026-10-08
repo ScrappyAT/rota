@@ -20,6 +20,9 @@ export const unstable_settings = {
 SplashScreen.preventAutoHideAsync();
 
 import { AuthProvider } from '../src/context/AuthContext';
+import { TeamProvider } from '../src/context/TeamContext';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { queryClient } from '../src/query/queryClient';
 
 export default function RootLayout() {
   const [loaded, error] = useFonts({
@@ -43,7 +46,11 @@ export default function RootLayout() {
 
   return (
     <AuthProvider>
-      <RootLayoutNav />
+      <QueryClientProvider client={queryClient}>
+        <TeamProvider>
+          <RootLayoutNav />
+        </TeamProvider>
+      </QueryClientProvider>
     </AuthProvider>
   );
 }

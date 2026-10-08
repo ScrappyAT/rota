@@ -15,3 +15,8 @@ export interface AuthResponse {
   refreshToken: string;
 }
 
+export interface CursorInfo {
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+

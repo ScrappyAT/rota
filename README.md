@@ -37,21 +37,27 @@ Rota is a mobile shift-scheduling application for small businesses such as resta
 - `npm run db:start`: Starts PostgreSQL and Redis using Docker Compose.
 - `npm run db:stop`: Stops the Docker Compose services.
 - `npm run db:migrate`: Runs database migrations in the API workspace.
+- `npm run db:seed:activity`: Seed the activity feed with 10,000 rows for a
+  team. Usage: `npm run db:seed:activity -- --team <team-uuid> [--count 10000]
+  [--reset]`. Reruns are idempotent; `--reset` removes only previously seeded
+  rows.
 - `npm run lint`: Runs ESLint across all workspaces.
 - `npm run typecheck`: Runs TypeScript checks across all workspaces.
 - `npm run test`: Runs tests across all workspaces.
 
-## Current Implementation Status (Phase 1)
+## Current Implementation Status
 
-Phase 1 provides a solid technical foundation. We have implemented:
-- Monorepo setup with npm workspaces.
-- Shared package for types and schemas.
-- Express API with health check, validation, centralized error handling, and database connection.
-- Expo mobile app with routing and placeholder screens.
-- Local development environment with Docker Compose.
+- **Phase 1** — Monorepo, shared package, Express bootstrap, Docker Compose,
+  Expo shell: complete.
+- **Phase 2** — Auth (JWT + rotating refresh tokens with reuse detection),
+  teams, role-based access control, invitations: complete and verified.
+- **Phase 3** — Shifts, shift assignments, swap requests/approvals, activity
+  feed, cursor pagination, 10k seed script, and mobile shift/swap/activity
+  screens: implemented. API behavior is covered by 43 automated tests
+  (including a live-DB suite); mobile screens type-check but have not been
+  exercised on a device.
+- See `docs/IMPLEMENTATION-STATUS.md` for the full breakdown.
 
-## Planned Next Steps
-
-- Implement authentication and authorization.
-- Design and build the API for shifts, teams, and swaps.
-- Implement mobile UI and connect with the API.
+### Planned Next Steps
+- Replace FlatList with FlashList for large rosters (see `docs/PAGINATION.md`).
+- Push notifications, offline shift viewing, billing, load testing.

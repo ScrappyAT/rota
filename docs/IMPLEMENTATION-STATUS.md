@@ -64,30 +64,35 @@ Last full validation: 2026-10-08 (see "Validation history").
 - Redis is connected but used only by the health check — no caching or shared
   rate-limit store yet.
 
-## Phase 3 — Shifts, Swaps, Activity (not implemented)
+## Phase 3 — Shifts, Swaps, Activity
 
-See `docs/PHASE-3-PLAN.md` for the full design.
+See `docs/PHASE-3-PLAN.md` for the full design, `docs/PAGINATION.md` for the
+cursor design and measured plans, `docs/PHASE-3-TEST-REPORT.md` for evidence.
 
-| Feature | Status |
-|---|---|
-| Shift creation / editing / deletion | Not started |
-| Shift assignment (multi-assignee) | Not started |
-| Swap requests and approvals | Not started |
-| Activity feed + activity writes | Not started |
-| Cursor pagination (timestamp + id) | Not started |
-| Shift-related DB migrations and indexes | Not started |
-| 10,000-record seed script | Not started |
-| Mobile shift list, infinite scroll, pull-to-refresh | Not started |
-| Mobile swaps + activity screens (currently placeholders) | Not started |
+| Feature | Status | Notes |
+|---|---|---|
+| Migration `003` (shifts, assignments, swaps, activity + indexes) | Completed & verified | Applied via `npm run db:migrate`; 10 tables verified in psql |
+| Shift create / detail / update / delete | Completed & verified | Owner/manager only; transactional with activity write |
+| Shift assignment (multi-assignee, unassign) | Completed & verified | Staff can unassign themselves; members-only validation |
+| Swap request / approve / reject / cancel | Completed & verified | Approval transfers assignment atomically; dedupe + status guards |
+| Activity feed + activity writes | Completed & verified | 10 event types; written in the same transaction as mutations |
+| Incoming activity on `MEMBER_JOINED` | Completed & verified | Hooked into invitation accept |
+| Cursor pagination (timestamp + id) | Completed & verified | Keyset on `(created_at|starts_at, id)`; limit+1; no OFFSET; `INVALID_CURSOR` → 400 |
+| 10,000-record seed script (`db:seed:activity`) | Completed & verified | Idempotent reruns; `--reset` scoped to `payload->>'source'='seed'`; 10,000 rows live |
+| Mobile shift list, infinite scroll, pull-to-refresh | Implemented, not independently verified | Type-checks; runtime not exercised on a device |
+| Mobile shift detail + create screen | Implemented, not independently verified | Assign/unassign/swap actions wired; type-checks |
+| Mobile swaps + activity screens | Implemented, not independently verified | Infinite lists + approve/reject/cancel mutations; type-checks |
+| Mobile team selector + React Query data layer | Implemented, not independently verified | TeamContext persists selected team; TanStack Query v5 |
+| Mobile FlatList list virtualization | Not started | Deferred: FlatList used now; FlashList swap documented in `docs/PAGINATION.md` |
 
 ## Phase 4+ — Graduation requirements
 
 | Requirement | Status | Notes |
 |---|---|---|
-| Shift scheduling | Not started | Phase 3 |
-| Shift swaps | Not started | Phase 3 |
-| Cursor pagination | Not started | Phase 3 |
-| 10,000 activity records | Not started | Phase 3 seed script |
+| Shift scheduling | Completed | Phase 3 |
+| Shift swaps | Completed | Phase 3 |
+| Cursor pagination | Completed | Phase 3 |
+| 10,000 activity records | Completed | Phase 3 seed script (10,000 rows in live DB) |
 | Subscription billing and proration | Not started | No payment provider chosen |
 | Push notifications | Not started | Requires Expo push tokens + notification writes |
 | Offline shift viewing | Not started | Requires local persistence (AsyncStorage/SQLite) |
@@ -110,19 +115,28 @@ Executed on 2026-10-08 against the live local Docker Postgres (5440) and Redis
 |---|---|---|
 | Typecheck | `npm run typecheck` | PASS (api, mobile, shared — 0 errors) |
 | Lint | `npm run lint` | PASS — 0 errors, 5 pre-existing unused-import warnings |
-| Tests | `npm test` | PASS — 3 suites, **21 tests passed** |
+| Tests | `npm test` | PASS — 4 suites, **43 tests passed** |
 
 Test breakdown:
 
 - `health.test.ts` — 1 test (mocked deps).
+- `rate-limit.test.ts` — 1 test (mocked deps): 429 after budget exceeded.
 - `integration.test.ts` — 19 tests (live DB): full Phase 2 scenario, last-owner
   protection, invitation one-time use and expiry, refresh rotation and reuse
   detection, validation errors, unauthenticated access.
-- `rate-limit.test.ts` — 1 test (mocked deps): 429 after budget exceeded.
+- `phase3.test.ts` — 22 tests (live DB): shift lifecycle and RBAC, swap
+  workflow (request → approve → assignment transfer), dedupe/status guards,
+  cross-team denial, cursor pagination gaplessness + mid-walk stability, 400s
+  on malformed cursors/params, feed isolation, and seed idempotency.
+  `maxWorkers: 1` keeps Phase 3 and Phase 2 DB suites from racing on shared
+  tables.
+
+Phase 3 was validated against a live database seeded with **10,000 activity
+rows** (see `docs/PHASE-3-TEST-REPORT.md` and `docs/PAGINATION.md`).
 
 Supersedes `docs/PHASE-2-TEST-REPORT.md` (which reports the earlier 10-test
 run and remains as a historical record).
 
 **Not verified:** mobile runtime behavior. The Expo app was type-checked but
-never launched on this machine; every mobile item above marked
+never launched on this machine; every mobile item marked
 "Implemented, not independently verified" carries that caveat.

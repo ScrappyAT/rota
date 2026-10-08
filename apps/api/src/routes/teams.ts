@@ -4,9 +4,17 @@ import { authenticate, AuthRequest } from '../middleware/auth';
 import { requireRole } from '../middleware/tenant';
 import { Roles } from '@rota/shared';
 
+import shiftsRouter from './shifts';
+import swapsRouter from './swaps';
+import activityRouter from './activity';
+
 const router = Router();
 
 router.use(authenticate);
+
+router.use('/:teamId/shifts', shiftsRouter);
+router.use('/:teamId/swaps', swapsRouter);
+router.use('/:teamId/activity', activityRouter);
 
 // Create Team
 router.post('/', async (req: AuthRequest, res, next) => {

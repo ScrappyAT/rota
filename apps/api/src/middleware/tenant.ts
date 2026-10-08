@@ -1,6 +1,7 @@
 import { Response, NextFunction } from 'express';
 import { pool } from '../db';
 import { AuthRequest } from './auth';
+import { isUuid } from '../utils';
 
 export const requireRole = (allowedRoles: string[]) => {
   return async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -11,6 +12,9 @@ export const requireRole = (allowedRoles: string[]) => {
     const teamId = req.params.teamId;
     if (!teamId) {
       return res.status(400).json({ success: false, error: { code: 'BAD_REQUEST', message: 'Team ID is required' } });
+    }
+    if (!isUuid(teamId)) {
+      return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid team ID' } });
     }
 
     try {
