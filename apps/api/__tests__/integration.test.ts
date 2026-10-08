@@ -21,11 +21,6 @@ describe('Phase 2 Integration Scenario', () => {
     await redisClient.connect().catch(() => {});
   });
 
-  afterAll(async () => {
-    await pool.end();
-    await redisClient.quit();
-  });
-
   it('1. Register User A', async () => {
     const res = await request(app).post('/auth/register').send({
       firstName: 'Alice', lastName: 'A', email: 'alice@test.com', password: 'password123'
@@ -100,5 +95,146 @@ describe('Phase 2 Integration Scenario', () => {
       role: 'STAFF'
     });
     expect(res.status).toBe(403);
+  });
+
+  it('10. Last-Owner protection: the last owner cannot demote themselves', async () => {
+    const meRes = await request(app).get('/auth/me').set('Authorization', `Bearer ${userAToken}`);
+    const aliceId = meRes.body.data.id;
+
+    const res = await request(app).patch(`/teams/${teamAId}/members/${aliceId}/role`).set('Authorization', `Bearer ${userAToken}`).send({
+      role: 'STAFF'
+    });
+    expect(res.status).toBe(403);
+    expect(res.body.error.message).toBe('Cannot demote the last owner');
+  });
+
+  it('11. Last-Owner protection: the last owner cannot be removed', async () => {
+    const meRes = await request(app).get('/auth/me').set('Authorization', `Bearer ${userAToken}`);
+    const aliceId = meRes.body.data.id;
+
+    const res = await request(app).delete(`/teams/${teamAId}/members/${aliceId}`).set('Authorization', `Bearer ${userAToken}`);
+    expect(res.status).toBe(403);
+    expect(res.body.error.message).toBe('Cannot remove the last owner');
+
+    // A manager cannot remove an owner either
+    const managerRes = await request(app).delete(`/teams/${teamAId}/members/${aliceId}`).set('Authorization', `Bearer ${userBToken}`);
+    expect(managerRes.status).toBe(403);
+  });
+
+  it('12. Invitation is single-use: the same token cannot be accepted twice', async () => {
+    const res = await request(app).post('/invitations/accept').set('Authorization', `Bearer ${userBToken}`).send({
+      token: inviteToken
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('INVALID_TOKEN');
+  });
+
+  it('13. Invitation expires: an expired token cannot be accepted', async () => {
+    const expiredEmail = `expired-${Date.now()}@test.com`;
+
+    const inviteRes = await request(app).post(`/invitations/team/${teamBId}`).set('Authorization', `Bearer ${userBToken}`).send({
+      email: expiredEmail,
+      role: 'STAFF'
+    });
+    expect(inviteRes.status).toBe(201);
+    const expiredToken = inviteRes.body.data.token;
+
+    const registerRes = await request(app).post('/auth/register').send({
+      firstName: 'Eve', lastName: 'E', email: expiredEmail, password: 'password123'
+    });
+    expect(registerRes.status).toBe(201);
+    const eveToken = registerRes.body.data.accessToken;
+
+    await pool.query(
+      "UPDATE invitations SET expires_at = NOW() - INTERVAL '1 day' WHERE team_id = $1 AND email = $2",
+      [teamBId, expiredEmail]
+    );
+
+    const res = await request(app).post('/invitations/accept').set('Authorization', `Bearer ${eveToken}`).send({
+      token: expiredToken
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('INVALID_TOKEN');
+  });
+});
+
+describe('Refresh token rotation, reuse protection, and error handling', () => {
+  const uniqueEmail = `refresh-${Date.now()}@test.com`;
+  let firstRefreshToken = '';
+  let secondRefreshToken = '';
+
+  afterAll(async () => {
+    await pool.end();
+    await redisClient.quit();
+  });
+
+  it('registers a new user and returns a refresh token', async () => {
+    const res = await request(app).post('/auth/register').send({
+      firstName: 'Rita', lastName: 'R', email: uniqueEmail, password: 'password123'
+    });
+    expect(res.status).toBe(201);
+    firstRefreshToken = res.body.data.refreshToken;
+    expect(firstRefreshToken).toBeTruthy();
+  });
+
+  it('rotates the refresh token on use', async () => {
+    const loginRes = await request(app).post('/auth/login').send({
+      email: uniqueEmail, password: 'password123'
+    });
+    expect(loginRes.status).toBe(200);
+    const userId = loginRes.body.data.user.id;
+
+    const res = await request(app).post('/auth/refresh').send({
+      refreshToken: firstRefreshToken, userId
+    });
+    expect(res.status).toBe(200);
+    secondRefreshToken = res.body.data.refreshToken;
+    expect(secondRefreshToken).toBeTruthy();
+    expect(secondRefreshToken).not.toBe(firstRefreshToken);
+  });
+
+  it('rejects reuse of the rotated token and revokes the session family', async () => {
+    const loginRes = await request(app).post('/auth/login').send({
+      email: uniqueEmail, password: 'password123'
+    });
+    expect(loginRes.status).toBe(200);
+    const userId = loginRes.body.data.user.id;
+
+    const reuse = await request(app).post('/auth/refresh').send({
+      refreshToken: firstRefreshToken, userId
+    });
+    expect(reuse.status).toBe(401);
+
+    // Reuse detection revokes every active token for the user
+    const subsequent = await request(app).post('/auth/refresh').send({
+      refreshToken: secondRefreshToken, userId
+    });
+    expect(subsequent.status).toBe(401);
+  });
+
+  it('returns 400 (not 500) for schema validation failures', async () => {
+    const res = await request(app).post('/auth/register').send({
+      firstName: 'Bad', lastName: 'Input', email: 'not-an-email', password: 'short'
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('rejects unauthenticated access to protected routes', async () => {
+    const res = await request(app).get('/teams');
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects invitation acceptance without a token', async () => {
+    const login = await request(app).post('/auth/login').send({
+      email: uniqueEmail, password: 'password123'
+    });
+    expect(login.status).toBe(200);
+    const res = await request(app)
+      .post('/invitations/accept')
+      .set('Authorization', `Bearer ${login.body.data.accessToken}`)
+      .send({});
+    expect(res.status).toBe(400);
   });
 });

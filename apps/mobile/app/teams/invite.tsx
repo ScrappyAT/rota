@@ -2,12 +2,12 @@ import { useState } from 'react';
 import { View, Text, TextInput, Button, StyleSheet, Alert } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { apiClient } from '../../src/api/client';
-import { Roles } from '@rota/shared';
+import { Roles, Role } from '@rota/shared';
 
 export default function InviteMemberScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const [email, setEmail] = useState('');
-  const [role, setRole] = useState(Roles.STAFF);
+  const [role, setRole] = useState<Role>(Roles.STAFF);
   const [loading, setLoading] = useState(false);
   const [token, setToken] = useState('');
 

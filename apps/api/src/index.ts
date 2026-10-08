@@ -20,7 +20,7 @@ app.get('/health', async (req, res, next) => {
     const dbStatus = await pool.query('SELECT 1').then(() => 'ok').catch(() => 'error');
     const redisStatus = redisClient.isReady ? 'ok' : 'error';
     
-    const response: ApiResponse<{ status: string, db: string, redis: string }> = {
+    const response: ApiResponse<{ status: string; db: string; redis: string; timestamp: string }> = {
       success: true,
       data: {
         status: dbStatus === 'ok' && redisStatus === 'ok' ? 'ok' : 'error',

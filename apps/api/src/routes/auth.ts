@@ -88,22 +88,30 @@ router.post('/refresh', async (req, res, next) => {
     const { refreshToken, userId } = req.body;
     if (!refreshToken || !userId) return res.status(400).json({ success: false, error: { code: 'BAD_REQUEST', message: 'Missing tokens' } });
 
-    const { rows } = await pool.query('SELECT id, token_hash, expires_at, revoked_at FROM refresh_tokens WHERE user_id = $1 AND revoked_at IS NULL', [userId]);
-    
-    let validTokenId = null;
+    const { rows } = await pool.query('SELECT id, token_hash, expires_at, revoked_at FROM refresh_tokens WHERE user_id = $1', [userId]);
+
+    let matchedToken = null;
     for (const row of rows) {
-      if (row.expires_at > new Date() && await bcrypt.compare(refreshToken, row.token_hash)) {
-        validTokenId = row.id;
+      if (await bcrypt.compare(refreshToken, row.token_hash)) {
+        matchedToken = row;
         break;
       }
     }
 
-    if (!validTokenId) {
+    if (!matchedToken || matchedToken.expires_at <= new Date()) {
+      return res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Invalid or expired refresh token' } });
+    }
+
+    if (matchedToken.revoked_at) {
+      // Reuse detection: a rotated (revoked) token was presented again.
+      // Assume the token family is compromised and revoke every active session for this user.
+      console.warn(`Refresh token reuse detected for user ${userId}; revoking all active sessions.`);
+      await pool.query('UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL', [userId]);
       return res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Invalid or expired refresh token' } });
     }
 
     // Revoke old token
-    await pool.query('UPDATE refresh_tokens SET revoked_at = NOW() WHERE id = $1', [validTokenId]);
+    await pool.query('UPDATE refresh_tokens SET revoked_at = NOW() WHERE id = $1', [matchedToken.id]);
 
     // Get user
     const userRes = await pool.query('SELECT id, email, first_name as "firstName", last_name as "lastName", created_at as "createdAt" FROM users WHERE id = $1', [userId]);
