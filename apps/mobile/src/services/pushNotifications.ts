@@ -25,12 +25,23 @@ try {
 }
 
 /**
- * Configure Android notification channels for shifts and swaps.
+ * Configure Android notification channels for shifts and swaps using the system default sound.
  */
 export async function setupNotificationChannels(): Promise<void> {
   if (Platform.OS !== 'android') return;
 
   try {
+    // If the 'shifts' channel was previously created with an invalid custom sound,
+    // delete it so it can be recreated cleanly with the Android system default sound.
+    try {
+      const existingShifts = await Notifications.getNotificationChannelAsync('shifts');
+      if (existingShifts && existingShifts.sound === 'custom') {
+        await Notifications.deleteNotificationChannelAsync('shifts');
+      }
+    } catch {
+      // Best-effort channel migration check
+    }
+
     await Notifications.setNotificationChannelAsync('default', {
       name: 'General',
       importance: Notifications.AndroidImportance.HIGH,
@@ -43,7 +54,6 @@ export async function setupNotificationChannels(): Promise<void> {
       importance: Notifications.AndroidImportance.MAX,
       vibrationPattern: [0, 250, 250, 250],
       lightColor: '#0052CC',
-      sound: 'default',
     });
   } catch (err) {
     console.warn('[push] Failed to set notification channels:', err);
