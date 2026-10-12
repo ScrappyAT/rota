@@ -2,11 +2,16 @@ import { createContext, useContext, useEffect, useState } from 'react';
 import * as SecureStore from 'expo-secure-store';
 import { User, AuthResponse } from '@rota/shared';
 import { apiClient } from '../api/client';
+import { queryClient } from '../query/queryClient';
+import { clearUserCache } from '../storage/shiftCache';
+import { unregisterCurrentDevice } from '../services/pushNotifications';
 import { router, useSegments } from 'expo-router';
 
 interface AuthContextType {
   user: User | null;
   loading: boolean;
+  activeTeamId: string | null;
+  setActiveTeamId: (id: string | null) => Promise<void>;
   login: (data: AuthResponse) => Promise<void>;
   logout: () => Promise<void>;
   refreshAuth: () => Promise<void>;
@@ -16,8 +21,18 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const [activeTeamId, setActiveTeamIdState] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const segments = useSegments();
+
+  const setActiveTeamId = async (id: string | null) => {
+    setActiveTeamIdState(id);
+    if (id) {
+      await SecureStore.setItemAsync('activeTeamId', id);
+    } else {
+      await SecureStore.deleteItemAsync('activeTeamId');
+    }
+  };
 
   useEffect(() => {
     refreshAuth();
@@ -31,7 +46,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!user && !inAuthGroup) {
       router.replace('/(auth)/login');
     } else if (user && inAuthGroup) {
-      router.replace('/(tabs)/');
+      router.replace('/');
     }
   }, [user, loading, segments]);
 
@@ -43,6 +58,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logout = async () => {
+    await unregisterCurrentDevice();
+    if (user?.id) {
+      await clearUserCache(user.id);
+    }
+    queryClient.clear();
+
     const refreshToken = await SecureStore.getItemAsync('refreshToken');
     if (refreshToken) {
       await apiClient.request('/auth/logout', {
@@ -51,9 +72,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
     }
     setUser(null);
+    setActiveTeamIdState(null);
     await SecureStore.deleteItemAsync('accessToken');
     await SecureStore.deleteItemAsync('refreshToken');
     await SecureStore.deleteItemAsync('userId');
+    await SecureStore.deleteItemAsync('activeTeamId');
   };
 
   let isRefreshing = false;
@@ -64,6 +87,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const refreshToken = await SecureStore.getItemAsync('refreshToken');
       const userId = await SecureStore.getItemAsync('userId');
+      const savedTeamId = await SecureStore.getItemAsync('activeTeamId');
+
+      if (savedTeamId) {
+        setActiveTeamIdState(savedTeamId);
+      }
+
       if (refreshToken && userId) {
         const res = await apiClient.request<AuthResponse>('/auth/refresh', {
           method: 'POST',
@@ -81,7 +110,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           await SecureStore.deleteItemAsync('userId');
         }
       }
-    } catch (e) {
+    } catch {
       setUser(null);
     } finally {
       isRefreshing = false;
@@ -90,7 +119,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, refreshAuth }}>
+    <AuthContext.Provider value={{ user, loading, activeTeamId, setActiveTeamId, login, logout, refreshAuth }}>
       {children}
     </AuthContext.Provider>
   );

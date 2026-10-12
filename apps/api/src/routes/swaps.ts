@@ -7,6 +7,7 @@ import { HttpError } from '../http-error';
 import { uuidParam } from '../utils';
 import { parseLimit, page, cursorPosition, parseStatus } from '../pagination';
 import { addActivity } from '../services/activity';
+import { notify } from '../services/notifications';
 
 const router = Router({ mergeParams: true });
 
@@ -191,6 +192,15 @@ router.post('/:swapId/approve', async (req: AuthRequest, res, next) => {
       });
 
       await client.query('COMMIT');
+      await notify({
+        teamId,
+        userId: swap.requestedBy,
+        type: 'SWAP_APPROVED',
+        title: 'Swap request approved',
+        body: `Your swap request for "${swap.shiftTitle}" was approved.`,
+        data: { teamId, shiftId: swap.shiftId, swapId, event: 'swap_approved' },
+        eventKey: `swap_approved:${swapId}:${swap.requestedBy}`,
+      });
       res.json({ success: true });
     } catch (e) {
       await client.query('ROLLBACK');
@@ -216,7 +226,8 @@ router.post('/:swapId/reject', async (req: AuthRequest, res, next) => {
       await client.query('BEGIN');
 
       const { rows } = await client.query(
-        `SELECT sr.id, sr.offered_to as "offeredTo", sr.status, s.team_id as "teamId", s.title as "shiftTitle", sr.shift_id as "shiftId"
+        `SELECT sr.id, sr.offered_to as "offeredTo", sr.requested_by as "requestedBy", sr.status,
+                s.team_id as "teamId", s.title as "shiftTitle", sr.shift_id as "shiftId"
          FROM swap_requests sr
          JOIN shifts s ON s.id = sr.shift_id
          WHERE sr.id = $1 AND s.team_id = $2`,
@@ -251,6 +262,15 @@ router.post('/:swapId/reject', async (req: AuthRequest, res, next) => {
       });
 
       await client.query('COMMIT');
+      await notify({
+        teamId,
+        userId: swap.requestedBy,
+        type: 'SWAP_REJECTED',
+        title: 'Swap request rejected',
+        body: `Your swap request for "${swap.shiftTitle}" was rejected.`,
+        data: { teamId, shiftId: swap.shiftId, swapId, event: 'swap_rejected' },
+        eventKey: `swap_rejected:${swapId}:${swap.requestedBy}`,
+      });
       res.json({ success: true });
     } catch (e) {
       await client.query('ROLLBACK');

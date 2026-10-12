@@ -1,61 +1,122 @@
-import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View, ActivityIndicator } from 'react-native';
+import { useState, useEffect } from 'react';
+import { FlatList, RefreshControl, StyleSheet, Text, View, ActivityIndicator, TouchableOpacity, Alert } from 'react-native';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { router } from 'expo-router';
 import { fetchShifts } from '../../src/api/shifts';
 import { useTeam } from '../../src/context/TeamContext';
 import { useAuth } from '../../src/context/AuthContext';
+import { useNetwork } from '../../src/context/NetworkContext';
+import { saveCachedShifts, getCachedShifts, CachedShiftsData } from '../../src/storage/shiftCache';
+import { queryClient } from '../../src/query/queryClient';
 import { TeamGate } from '../../src/components/TeamGate';
 import { TeamSelector } from '../../src/components/TeamSelector';
 import { ErrorState } from '../../src/components/ErrorState';
+import { OfflineBanner } from '../../src/components/OfflineBanner';
 import { formatRange } from '../../src/utils/dates';
+import { Screen } from '../../src/components/ui/Screen';
+import { Card } from '../../src/components/ui/Card';
+import { Button } from '../../src/components/ui/Button';
+import { typography, spacing, colors, borderRadius } from '../../src/components/ui/theme';
 
 export default function ShiftsScreen() {
-  const { team } = useTeam();
+  const { team, role } = useTeam();
   const { user } = useAuth();
-
+  const { isOffline } = useNetwork();
   const teamId = team?.id ?? '';
+  const canManage = role === 'OWNER' || role === 'MANAGER';
 
-  const canManage = team !== null;
+  const [cachedData, setCachedData] = useState<CachedShiftsData | null>(null);
+
+  // Load persistent cache on mount or when user/team changes
+  useEffect(() => {
+    let active = true;
+    if (user?.id && teamId) {
+      getCachedShifts(user.id, teamId).then((data) => {
+        if (!active || !data) return;
+        setCachedData(data);
+
+        // Pre-populate query client if no active in-memory cache exists
+        const existing = queryClient.getQueryData(['shifts', teamId]);
+        if (!existing && data.items.length > 0) {
+          queryClient.setQueryData(['shifts', teamId], {
+            pages: [{ items: data.items, nextCursor: data.nextCursor }],
+            pageParams: [undefined],
+          });
+        }
+      });
+    }
+    return () => {
+      active = false;
+    };
+  }, [user?.id, teamId]);
 
   const query = useInfiniteQuery({
     queryKey: ['shifts', teamId],
     enabled: Boolean(teamId),
-    queryFn: ({ pageParam }) => fetchShifts(teamId, { limit: 20, cursor: pageParam ?? undefined }),
+    queryFn: async ({ pageParam }) => {
+      const res = await fetchShifts(teamId, { limit: 20, cursor: pageParam ?? undefined });
+      if (user?.id && res.items) {
+        saveCachedShifts(user.id, teamId, res.items, res.nextCursor ?? undefined).catch(() => {});
+      }
+      return res;
+    },
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    retry: (failureCount) => (isOffline ? false : failureCount < 1),
   });
 
-  const items = query.data?.pages.flatMap((p) => p.items) ?? [];
+  const queryItems = query.data?.pages.flatMap((p) => p.items) ?? [];
+  // Use live query items if available, otherwise seamlessly fallback to persistent cache
+  const items = queryItems.length > 0 ? queryItems : (cachedData?.items ?? []);
+  const hasShifts = items.length > 0;
+
+  const handleCreateShiftPress = () => {
+    if (isOffline) {
+      Alert.alert('Offline Mode', 'Cannot create shifts while offline. Please connect to the internet.');
+      return;
+    }
+    router.push('/shifts/new');
+  };
 
   const renderItem = ({ item }: { item: { id: string; title: string; startsAt: string; endsAt: string; status: string } }) => (
-    <Pressable style={styles.card} onPress={() => router.push(`/shifts/${item.id}`)}>
-      <View style={styles.cardHeader}>
-        <Text style={styles.cardTitle} numberOfLines={1}>
-          {item.title}
-        </Text>
-        <Text style={[styles.badge, item.status === 'ACTIVE' ? styles.badgeActive : styles.badgeMuted]}>{item.status}</Text>
-      </View>
-      <Text style={styles.cardMeta}>{formatRange(item.startsAt, item.endsAt)}</Text>
-    </Pressable>
+    <TouchableOpacity activeOpacity={0.8} onPress={() => router.push(`/shifts/${item.id}`)}>
+      <Card style={styles.card}>
+        <View style={styles.cardHeader}>
+          <Text style={[typography.h3, { flex: 1, marginRight: spacing.sm }]} numberOfLines={1}>
+            {item.title}
+          </Text>
+          <View style={[styles.badge, item.status === 'ACTIVE' ? styles.badgeActive : styles.badgeMuted]}>
+            <Text style={[typography.label, item.status === 'ACTIVE' ? styles.badgeTextActive : styles.badgeTextMuted]}>
+              {item.status}
+            </Text>
+          </View>
+        </View>
+        <Text style={[typography.bodySmall, { marginTop: spacing.xs }]}>{formatRange(item.startsAt, item.endsAt)}</Text>
+      </Card>
+    </TouchableOpacity>
   );
 
   return (
-    <View style={styles.container}>
+    <Screen style={styles.container} scrollable={false}>
       <TeamGate>
-        <TeamSelector />
+        {isOffline && <OfflineBanner />}
 
-        {canManage && (
+        <View style={styles.header}>
+          <TeamSelector />
+        </View>
+
+        {canManage && user && (
           <View style={styles.actions}>
-            {user && (
-              <Pressable style={styles.newButton} onPress={() => router.push('/shifts/new')}>
-                <Text style={styles.newButtonText}>New Shift</Text>
-              </Pressable>
-            )}
+            <Button
+              title={isOffline ? "Create Shift (Offline)" : "Create Shift"}
+              onPress={handleCreateShiftPress}
+              disabled={isOffline}
+            />
           </View>
         )}
 
-        {query.isError ? (
-          <ErrorState message="Could not load shifts." />
+        {query.isError && !hasShifts ? (
+          <ErrorState message={isOffline ? "You are offline and no cached shifts were found." : "Could not load shifts."} />
         ) : (
           <FlatList
             data={items}
@@ -66,49 +127,60 @@ export default function ShiftsScreen() {
               <RefreshControl refreshing={query.isRefetching} onRefresh={() => query.refetch()} />
             }
             onEndReached={() => {
-              if (query.hasNextPage) query.fetchNextPage();
+              if (!isOffline && query.hasNextPage) query.fetchNextPage();
             }}
             onEndReachedThreshold={0.4}
-            ListFooterComponent={query.isFetchingNextPage ? <ActivityIndicator /> : null}
+            ListFooterComponent={query.isFetchingNextPage ? <ActivityIndicator color={colors.primary} style={{ margin: spacing.md }} /> : null}
             ListEmptyComponent={
               <View style={styles.empty}>
-                <Text style={styles.emptyText}>
-                  {query.isPending ? 'No shifts yet.' : 'No shifts match.'}
+                <Text style={typography.bodySmall}>
+                  {query.isPending && !hasShifts
+                    ? 'Loading shifts...'
+                    : isOffline && !hasShifts
+                    ? 'You are offline and no shifts have been cached yet.'
+                    : 'No shifts match.'}
                 </Text>
               </View>
             }
           />
         )}
       </TeamGate>
-    </View>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
-  actions: { paddingHorizontal: 12, paddingBottom: 4 },
-  newButton: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#2563eb',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 8,
+  container: { padding: 0 },
+  header: {
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.md,
   },
-  newButtonText: { color: '#fff', fontWeight: '600' },
-  list: { paddingHorizontal: 12, paddingBottom: 24 },
+  actions: {
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.sm,
+    paddingTop: spacing.sm,
+  },
+  list: {
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.xxl,
+    paddingTop: spacing.sm,
+  },
   card: {
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 10,
-    marginBottom: 10,
+    marginBottom: spacing.md,
   },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  cardTitle: { fontSize: 16, fontWeight: '600', flex: 1, marginRight: 8 },
-  badge: { fontSize: 11, fontWeight: '700', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10, overflow: 'hidden' },
-  badgeActive: { backgroundColor: '#dcfce7', color: '#166534' },
-  badgeMuted: { backgroundColor: '#f3f4f6', color: '#6b7280' },
-  cardMeta: { fontSize: 13, color: '#6b7280', marginTop: 6 },
-  empty: { paddingVertical: 48, alignItems: 'center' },
-  emptyText: { color: '#9ca3af' },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  badge: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: borderRadius.round,
+  },
+  badgeActive: { backgroundColor: colors.success + '20' },
+  badgeTextActive: { color: colors.success },
+  badgeMuted: { backgroundColor: colors.border },
+  badgeTextMuted: { color: colors.textSecondary },
+  empty: { paddingVertical: spacing.xxl, alignItems: 'center' },
 });

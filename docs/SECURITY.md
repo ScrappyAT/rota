@@ -16,6 +16,32 @@
   returning 400 for malformed ids instead of leaking a database error.
 - Rate limiting is applied to all sensitive endpoints to mitigate brute force and credential stuffing.
 
+## Billing & Subscriptions (Phase 4)
+
+- Every `/teams/:teamId/subscription` route requires the caller to be the team
+  **OWNER**; managers/staff get 403 and non-members get 404 (no cross-team
+  plan, payment, or seat data is ever exposed).
+- Payment verification (`POST /verify`) and the webhook settle through one
+  guarded reconciliation path inside an explicit transaction:
+  - payments are claimed with `UPDATE ... WHERE status = 'PENDING'`, so a
+    concurrent or duplicate settlement cannot double-apply,
+  - tx_ref, currency, amount, and `flw_transaction_id` are validated before
+    any write; mismatch throws 400 `PAYMENT_MISMATCH` and the transaction is
+    rolled back,
+  - already-processed payments return `ALREADY_PROCESSED` without side effects.
+- The webhook validates the `verif-hash` header using a **constant-time**
+  comparison against `FLW_SECRET_HASH`, requires a real charge id, and
+  deduplicates by `webhook_events.event_key` (PK) so replaying a webhook
+  cannot re-settle. The webhook is rate limited (300 req / 15 min / IP).
+- Secrets: `FLW_SECRET_KEY`, `FLW_PUBLIC_KEY`, and `FLW_SECRET_HASH` are read
+  from the environment only, never logged or returned, and are required (with
+  `JWT_SECRET`) when `NODE_ENV=production` (enforced in `env.ts`).
+- Money is integer minor units (kobo); the Flutterwave client converts to the
+  gateway's major unit and back with an explicit tolerance so forged/rounded
+  amounts cannot float past validation.
+- Invitation capacity is tenant-scoped: pending invites reserve seats, and an
+  `ACTIVE` subscription is required to add members (403 `SUBSCRIPTION_REQUIRED`).
+
 ## Roles
 - **OWNER**: Can modify all aspects of the team, manage all roles, and remove any member. The last owner cannot be removed.
 - **MANAGER**: Can manage shifts and invite STAFF. Cannot modify OWNERs or promote to MANAGER.

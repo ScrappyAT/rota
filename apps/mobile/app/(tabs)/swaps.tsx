@@ -3,9 +3,11 @@ import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-q
 import { fetchSwaps, approveSwap, rejectSwap, cancelSwap } from '../../src/api/swaps';
 import { useTeam } from '../../src/context/TeamContext';
 import { useAuth } from '../../src/context/AuthContext';
+import { useNetwork } from '../../src/context/NetworkContext';
 import { TeamGate } from '../../src/components/TeamGate';
 import { TeamSelector } from '../../src/components/TeamSelector';
 import { ErrorState } from '../../src/components/ErrorState';
+import { OfflineBanner } from '../../src/components/OfflineBanner';
 import { formatRange, timeAgo } from '../../src/utils/dates';
 
 interface SwapItem {
@@ -26,6 +28,7 @@ const shortId = (id: string | null) => (id ? id.slice(0, 8) : '—');
 export default function SwapsScreen() {
   const { team, role } = useTeam();
   const { user } = useAuth();
+  const { isOffline } = useNetwork();
   const queryClient = useQueryClient();
   const teamId = team?.id ?? '';
 
@@ -35,27 +38,51 @@ export default function SwapsScreen() {
     queryFn: ({ pageParam }) => fetchSwaps(teamId, { limit: 20, cursor: pageParam ?? undefined }),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    retry: (failureCount) => (isOffline ? false : failureCount < 1),
   });
 
   const invalidateAll = () =>
     queryClient.invalidateQueries({ queryKey: ['swaps', teamId] });
 
+  const guardOffline = (action: string) => {
+    if (isOffline) {
+      Alert.alert('Offline Mode', `Cannot ${action} swaps while offline. Please connect to the internet.`);
+      return true;
+    }
+    return false;
+  };
+
   const approve = useMutation({
-    mutationFn: (swapId: string) => approveSwap(teamId, swapId),
+    mutationFn: (swapId: string) => {
+      if (guardOffline('approve')) throw new Error('Offline');
+      return approveSwap(teamId, swapId);
+    },
     onSuccess: invalidateAll,
-    onError: (e) => Alert.alert('Error', (e as Error).message),
+    onError: (e) => {
+      if ((e as Error).message !== 'Offline') Alert.alert('Error', (e as Error).message);
+    },
   });
 
   const reject = useMutation({
-    mutationFn: (swapId: string) => rejectSwap(teamId, swapId, 'Rejected from the app'),
+    mutationFn: (swapId: string) => {
+      if (guardOffline('reject')) throw new Error('Offline');
+      return rejectSwap(teamId, swapId, 'Rejected from the app');
+    },
     onSuccess: invalidateAll,
-    onError: (e) => Alert.alert('Error', (e as Error).message),
+    onError: (e) => {
+      if ((e as Error).message !== 'Offline') Alert.alert('Error', (e as Error).message);
+    },
   });
 
   const cancel = useMutation({
-    mutationFn: (swapId: string) => cancelSwap(teamId, swapId),
+    mutationFn: (swapId: string) => {
+      if (guardOffline('cancel')) throw new Error('Offline');
+      return cancelSwap(teamId, swapId);
+    },
     onSuccess: invalidateAll,
-    onError: (e) => Alert.alert('Error', (e as Error).message),
+    onError: (e) => {
+      if ((e as Error).message !== 'Offline') Alert.alert('Error', (e as Error).message);
+    },
   });
 
   const items = query.data?.pages.flatMap((p) => p.items) ?? [];
@@ -103,6 +130,12 @@ export default function SwapsScreen() {
   return (
     <View style={styles.container}>
       <TeamGate>
+        {isOffline && (
+          <OfflineBanner
+            message="Offline Mode"
+            subMessage="Managing swaps requires an internet connection."
+          />
+        )}
         <TeamSelector />
         {query.isError ? (
           <ErrorState message="Could not load swap requests." />

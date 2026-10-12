@@ -1,7 +1,11 @@
 import { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, Button, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, StyleSheet, FlatList, ActivityIndicator, Alert } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { apiClient } from '../../src/api/client';
+import { Screen } from '../../src/components/ui/Screen';
+import { Card } from '../../src/components/ui/Card';
+import { Button } from '../../src/components/ui/Button';
+import { typography, spacing, colors } from '../../src/components/ui/theme';
 
 export default function TeamMembersScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -33,40 +37,56 @@ export default function TeamMembersScreen() {
   };
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Team Members</Text>
-      
+    <Screen style={styles.container}>
+      <Text style={[typography.h2, { marginBottom: spacing.lg }]}>Team Members</Text>
+
       {loading ? (
-        <ActivityIndicator size="large" />
+        <ActivityIndicator size="large" color={colors.primary} />
       ) : (
         <FlatList
           data={members}
           keyExtractor={item => item.id}
+          scrollEnabled={false}
           renderItem={({ item }) => (
-            <View style={styles.memberCard}>
+            <Card style={styles.memberCard}>
               <View>
-                <Text style={styles.memberName}>{item.firstName} {item.lastName}</Text>
-                <Text style={styles.memberRole}>{item.role}</Text>
+                <Text style={typography.h3}>{item.firstName} {item.lastName}</Text>
+                <Text style={typography.bodySmall}>{item.role}</Text>
               </View>
-              <Button title="Remove" color="red" onPress={() => removeMember(item.userId)} />
-            </View>
+              <Button
+                title="Remove"
+                variant="danger"
+                size="small"
+                onPress={() => removeMember(item.userId)}
+              />
+            </Card>
           )}
+          ListEmptyComponent={
+            <Text style={typography.bodySmall}>No members found.</Text>
+          }
         />
       )}
 
       <View style={styles.actions}>
-        <Button title="Invite Member" onPress={() => router.push(`/teams/${id}/invite`)} />
-        <Button title="Back" onPress={() => router.back()} color="gray" />
+        <Button
+          title="Invite New Member"
+          onPress={() => router.push({ pathname: '/teams/invite', params: { id } })}
+        />
+        <Button title="Back" variant="ghost" onPress={() => router.back()} />
       </View>
-    </View>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, backgroundColor: '#fff' },
-  title: { fontSize: 24, fontWeight: 'bold', marginBottom: 20 },
-  memberCard: { padding: 15, borderWidth: 1, borderColor: '#eee', borderRadius: 8, marginBottom: 10, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  memberName: { fontSize: 16, fontWeight: 'bold' },
-  memberRole: { fontSize: 14, color: '#666' },
-  actions: { marginTop: 20, gap: 10 }
+  container: { padding: spacing.md },
+  memberCard: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  actions: {
+    marginTop: spacing.xl,
+    gap: spacing.md,
+  }
 });

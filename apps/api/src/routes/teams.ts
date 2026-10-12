@@ -7,6 +7,8 @@ import { Roles } from '@rota/shared';
 import shiftsRouter from './shifts';
 import swapsRouter from './swaps';
 import activityRouter from './activity';
+import subscriptionRouter from './subscription';
+import { billingConfig } from '../billing/config';
 
 const router = Router();
 
@@ -15,6 +17,7 @@ router.use(authenticate);
 router.use('/:teamId/shifts', shiftsRouter);
 router.use('/:teamId/swaps', swapsRouter);
 router.use('/:teamId/activity', activityRouter);
+router.use('/:teamId/subscription', subscriptionRouter);
 
 // Create Team
 router.post('/', async (req: AuthRequest, res, next) => {
@@ -34,6 +37,11 @@ router.post('/', async (req: AuthRequest, res, next) => {
       await client.query(
         'INSERT INTO team_memberships (team_id, user_id, role) VALUES ($1, $2, $3)',
         [team.id, req.user.id, Roles.OWNER]
+      );
+      await client.query(
+        `INSERT INTO team_subscriptions (team_id, plan_code, seats, status, period_started_at, period_ends_at)
+         VALUES ($1, $2, 1, 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + make_interval(days => $3))`,
+        [team.id, 'FREE', billingConfig.periodDays]
       );
       await client.query('COMMIT');
       res.status(201).json({ success: true, data: team });
@@ -94,7 +102,7 @@ router.patch('/:teamId/members/:userId/role', requireRole([Roles.OWNER]), async 
     if (!Object.values(Roles).includes(role)) {
       return res.status(400).json({ success: false, error: { code: 'BAD_REQUEST', message: 'Invalid role' } });
     }
-    
+
     // Prevent last owner demotion
     if (role !== Roles.OWNER) {
       const ownerCheck = await pool.query(
@@ -105,7 +113,7 @@ router.patch('/:teamId/members/:userId/role', requireRole([Roles.OWNER]), async 
         'SELECT role FROM team_memberships WHERE team_id = $1 AND user_id = $2',
         [req.params.teamId, req.params.userId]
       );
-      
+
       if (isCurrentOwner.rows[0]?.role === Roles.OWNER && parseInt(ownerCheck.rows[0].count) <= 1) {
         return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Cannot demote the last owner' } });
       }
@@ -127,16 +135,16 @@ router.delete('/:teamId/members/:userId', requireRole([Roles.OWNER, Roles.MANAGE
     // Only OWNER can remove OWNER or MANAGER (MANAGER can only remove STAFF)
     const targetMemberRes = await pool.query('SELECT role FROM team_memberships WHERE team_id = $1 AND user_id = $2', [req.params.teamId, req.params.userId]);
     if (targetMemberRes.rows.length === 0) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Member not found' } });
-    
+
     const targetRole = targetMemberRes.rows[0].role;
-    
+
     const myRoleRes = await pool.query('SELECT role FROM team_memberships WHERE team_id = $1 AND user_id = $2', [req.params.teamId, req.user!.id]);
     const myRole = myRoleRes.rows[0].role;
-    
+
     if (myRole === Roles.MANAGER && targetRole !== Roles.STAFF) {
       return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Managers can only remove staff' } });
     }
-    
+
     if (targetRole === Roles.OWNER) {
       const ownerCheck = await pool.query(
         'SELECT COUNT(*) as count FROM team_memberships WHERE team_id = $1 AND role = $2',

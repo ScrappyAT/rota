@@ -34,6 +34,8 @@ Rota is a mobile shift-scheduling application for small businesses such as resta
 
 - `npm run dev:api`: Starts the API server in development mode.
 - `npm run dev:mobile`: Starts the Expo app.
+- `npm run build`: Compiles `packages/shared` first, then the API (same order
+  the production Docker build uses).
 - `npm run db:start`: Starts PostgreSQL and Redis using Docker Compose.
 - `npm run db:stop`: Stops the Docker Compose services.
 - `npm run db:migrate`: Runs database migrations in the API workspace.
@@ -56,8 +58,23 @@ Rota is a mobile shift-scheduling application for small businesses such as resta
   screens: implemented. API behavior is covered by 43 automated tests
   (including a live-DB suite); mobile screens type-check but have not been
   exercised on a device.
+- **Phase 4** — Seat-based subscriptions and Flutterwave billing: plan catalog,
+  per-team subscriptions with lazy ACTIVE/PAST_DUE/EXPIRED states, prorated
+  upgrades and seat changes, renewal, payment verification and a deduplicating
+  webhook, plus owner-only mobile screens (summary, plans, history). Covered by
+  50 new automated tests (93 total); the live card flow is unverified because
+  no Flutterwave sandbox credentials were available.
+- **Push notifications** — device registration/preferences API, notification
+  ledger with deterministic dedupe, Expo push delivery, and mobile
+  registration + handlers: complete. See `docs/ARCHITECTURE.md`.
 - See `docs/IMPLEMENTATION-STATUS.md` for the full breakdown.
 
-### Planned Next Steps
-- Replace FlatList with FlashList for large rosters (see `docs/PAGINATION.md`).
-- Push notifications, offline shift viewing, billing, load testing.
+## Production & Performance
+
+- **Deployment**: `Dockerfile` + `railway.json` produce a self-contained API
+  image (shared package built first, migrations run on boot). Runbook and env
+  reference in `docs/DEPLOYMENT.md`.
+- **Load testing**: Grafana k6 suite in `k6/` (health smoke, weighted workload,
+  cursor-pagination soak, rate-limit proof) — runbook in
+  `docs/PERFORMANCE-TESTING.md`.
+- **Graduation checklist**: `docs/SUBMISSION.md`.

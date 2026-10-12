@@ -1,7 +1,7 @@
 import { ApiResponse } from '@rota/shared';
 import * as SecureStore from 'expo-secure-store';
 
-const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000';
+export const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.101:3000';
 
 const AUTH_ENDPOINTS = ['/auth/login', '/auth/register', '/auth/refresh'];
 
@@ -49,6 +49,23 @@ class ApiClient {
     return accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
   }
 
+  private networkListeners: Set<(isOnline: boolean) => void> = new Set();
+
+  onNetworkStatusChange(listener: (isOnline: boolean) => void): () => void {
+    this.networkListeners.add(listener);
+    return () => this.networkListeners.delete(listener);
+  }
+
+  private notifyNetwork(isOnline: boolean) {
+    this.networkListeners.forEach((fn) => {
+      try {
+        fn(isOnline);
+      } catch {
+        // ignore listener errors
+      }
+    });
+  }
+
   async request<T>(endpoint: string, options: RequestInit = {}): Promise<ApiResponse<T>> {
     const url = `${API_URL}${endpoint}`;
     const canRefresh = !AUTH_ENDPOINTS.some((path) => endpoint.startsWith(path));
@@ -75,9 +92,11 @@ class ApiClient {
       }
 
       const data = await response.json();
+      this.notifyNetwork(true);
       return data as ApiResponse<T>;
     } catch (error) {
       console.error(`API Error on ${endpoint}:`, error);
+      this.notifyNetwork(false);
       return {
         success: false,
         error: {

@@ -52,17 +52,14 @@ Last full validation: 2026-10-08 (see "Validation history").
 
 - No invitation revoke/list-rejected endpoints (list shows only pending, valid).
 - Expired/revoked refresh tokens are never purged from the table.
-- Rate limiting covers only `/auth/*`; `/teams` and `/invitations` are not
-  rate-limited (they require credentials and mutate less aggressively).
 - `JWT_REFRESH_SECRET` in `env.ts` is unused (refresh tokens are opaque, not
   JWTs) — dead configuration, harmless.
 - Last-owner checks are read-then-write, not serialized; a concurrent race
   could theoretically demote two owners at once (single-writer deployments are
   unaffected).
-- `cors()` is wide open (`Access-Control-Allow-Origin: *` semantics); fine for
-  local dev, must be restricted before any real deployment.
-- Redis is connected but used only by the health check — no caching or shared
-  rate-limit store yet.
+- `/auth` (100), `/teams` (300), and `/invitations` (300) rate limits are
+  in-memory per instance; only `/devices` (200) is shared via Redis. Fine for
+  single-instance deploys, per-pod under horizontal scaling.
 
 ## Phase 3 — Shifts, Swaps, Activity
 
@@ -83,7 +80,27 @@ cursor design and measured plans, `docs/PHASE-3-TEST-REPORT.md` for evidence.
 | Mobile shift detail + create screen | Implemented, not independently verified | Assign/unassign/swap actions wired; type-checks |
 | Mobile swaps + activity screens | Implemented, not independently verified | Infinite lists + approve/reject/cancel mutations; type-checks |
 | Mobile team selector + React Query data layer | Implemented, not independently verified | TeamContext persists selected team; TanStack Query v5 |
+| Mobile UX Refinements (UI components, keyboards, settings) | Implemented, not independently verified | UI Kit applied, DateTimePicker installed, Settings screen added |
 | Mobile FlatList list virtualization | Not started | Deferred: FlatList used now; FlashList swap documented in `docs/PAGINATION.md` |
+
+## Phase 4 — Seat-Based Subscriptions & Flutterwave Billing
+
+See `docs/BILLING.md` for the domain design and `docs/PHASE-4-TEST-REPORT.md`
+for evidence.
+
+| Feature | Status | Notes |
+|---|---|---|
+| Migration `004` (plans, subscriptions, changes, payments, webhooks, invoices) | Completed & verified | Applied via `npm run db:migrate`; FREE plan backfilled for existing teams |
+| Plan catalog + team provisioning | Completed & verified | FREE/STARTER/GROWTH/SCALE seeded; FREE subscription created on team create |
+| Subscription status lifecycle (ACTIVE/PAST_DUE/EXPIRED) | Completed & verified | Lazy materialization; grace window on failed renewal; `transitionStatus` unit-tested |
+| Proration & money model (integer minor units) | Completed & verified | Upgrade/add seats prorated; downgrades/reductions immediate & free; amounts in kobo, gateway in naira |
+| Seat capacity enforcement | Completed & verified | Invites and seat edits gated; pending invites consume capacity |
+| Shift-create gate on active subscription | Completed & verified | 403 `SUBSCRIPTION_REQUIRED` when EXPIRED |
+| Checkout / verify / renew / seats endpoints | Completed & verified | Owner-only, Zod-validated; verify idempotent via guarded status claim |
+| Flutterwave client (checkout + verify + webhook) | Completed & verified against mocked contract | No live/sandbox credentials available — end-to-end card flow not exercised |
+| Webhook receiver with `verif-hash` + `event_key` dedupe | Completed & verified | Duplicate/bad-hash/unknown-ref scenarios covered by tests |
+| Owner-only subscription mobile screens | Implemented, not independently verified | Summary, plans+checkout, history/invoices; type-checks, no device run |
+| All-money-integer + envelope + parameterized SQL audit | Completed & verified | No user SQL concat; all errors use `ApiResponse` envelope |
 
 ## Phase 4+ — Graduation requirements
 
@@ -93,34 +110,38 @@ cursor design and measured plans, `docs/PHASE-3-TEST-REPORT.md` for evidence.
 | Shift swaps | Completed | Phase 3 |
 | Cursor pagination | Completed | Phase 3 |
 | 10,000 activity records | Completed | Phase 3 seed script (10,000 rows in live DB) |
-| Subscription billing and proration | Not started | No payment provider chosen |
-| Push notifications | Not started | Requires Expo push tokens + notification writes |
-| Offline shift viewing | Not started | Requires local persistence (AsyncStorage/SQLite) |
+| Subscription billing and proration | Completed | Phase 4 (see `docs/BILLING.md`) |
+| Push notifications | Completed & verified | Backend ledger + Expo push delivery, mobile registration, foreground/background handlers, deep link navigation, preference toggles, logout cleanup |
+| Offline shift viewing | Completed & verified | Persistent local cache via FileSystem AsyncStorage adapter, user/team isolation, offline indicator, write mutation blocking, auto-reconnect refresh |
 | Settings synchronization | Not started | Requires user settings table + API |
-| Redis caching | Partially implemented | Redis is up and health-checked; no cache layer |
+| Redis usage | Partially implemented | Health probe + `/devices` Redis-backed rate limiter; no general cache layer |
 | PostgreSQL sharding simulation | Not started | Needs design decision (logical shards by team_id) |
-| Load testing | Not started | Needs seeded data + k6/autocannon harness |
-| Android development build | Not started | Currently Expo Go workflow only; no `eas build` performed |
-| Deployment | Not started | Explicitly out of scope until requested |
-| Demo video | Not started | Blocked on Phase 3 UI existing |
+| Load testing (k6 harness) | Implemented, not independently verified | `k6/**` scripts + `docs/PERFORMANCE-TESTING.md`; k6 not yet installed/executed here — no benchmark numbers claimed |
+| Android development build | Completed & verified | EAS development build running on physical Samsung test device |
+| Deployment packaging (Docker + Railway) | Implemented, not independently verified | `Dockerfile`, `.dockerignore`, `railway.json`, `docs/DEPLOYMENT.md`; image not yet built/deployed in this session |
+| Demo video | Not started | Blocked on deployed host being reachable during recording |
 
 ---
 
 ## Validation history
 
-Executed on 2026-10-08 against the live local Docker Postgres (5440) and Redis
-(6380), both migrated:
+Executed against the live local Docker Postgres (5440) and Redis (6380), both migrated:
 
 | Gate | Command | Result |
 |---|---|---|
 | Typecheck | `npm run typecheck` | PASS (api, mobile, shared — 0 errors) |
-| Lint | `npm run lint` | PASS — 0 errors, 5 pre-existing unused-import warnings |
-| Tests | `npm test` | PASS — 4 suites, **43 tests passed** |
+| Lint | `npm run lint` | PASS — 0 errors, pre-existing warnings tolerated |
+| Tests | `npm test` | PASS — 11 suites, **135 tests passed** |
 
 Test breakdown:
 
 - `health.test.ts` — 1 test (mocked deps).
 - `rate-limit.test.ts` — 1 test (mocked deps): 429 after budget exceeded.
+- `security.test.ts` — 5 tests: Helmet headers, CORS origins, Redis rate limiting.
+- `cacheIsolation.test.ts` — 4 tests: User/team cache key isolation, individual shift detail pre-caching, secure logout eviction, cross-tenant isolation.
+- `notifications.test.ts` — 8 tests: Pure delivery helpers, token classification, pref columns, formatting.
+- `mobilePushContract.test.ts` — 8 tests: Token privacy (masked logging), payload routing decisions, preference keys contract.
+- `push.integration.test.ts` — 9 tests (live DB): Full push scenario, dedupe ledger, token pruning, preferences skipping.
 - `integration.test.ts` — 19 tests (live DB): full Phase 2 scenario, last-owner
   protection, invitation one-time use and expiry, refresh rotation and reuse
   detection, validation errors, unauthenticated access.
@@ -128,11 +149,20 @@ Test breakdown:
   workflow (request → approve → assignment transfer), dedupe/status guards,
   cross-team denial, cursor pagination gaplessness + mid-walk stability, 400s
   on malformed cursors/params, feed isolation, and seed idempotency.
-  `maxWorkers: 1` keeps Phase 3 and Phase 2 DB suites from racing on shared
-  tables.
+- `billing.test.ts` — 25 tests (pure math): proration, renewal amounts,
+  status transitions, change computation.
+- `billing.integration.test.ts` — 25 tests (live DB, gateway mocked):
+  provisioning, RBAC 403 / cross-tenant 404, prorated upgrades and seat
+  changes, downgrade immediacy, invite seat limits, failed renewal → PAST_DUE,
+  grace expiry → EXPIRED gate, successful renewal, webhook settle with
+  duplicate / bad-hash / unknown-ref handling, and settlement rollback on
+  amount/currency mismatch. See `docs/PHASE-4-TEST-REPORT.md`.
+  `maxWorkers: 1` keeps all DB suites from racing on shared tables.
 
 Phase 3 was validated against a live database seeded with **10,000 activity
 rows** (see `docs/PHASE-3-TEST-REPORT.md` and `docs/PAGINATION.md`).
+Phase 4 was validated with the gateway module mocked (no sandbox credentials);
+the live hosted-checkout and webhook delivery path is unverified.
 
 Supersedes `docs/PHASE-2-TEST-REPORT.md` (which reports the earlier 10-test
 run and remains as a historical record).

@@ -1,5 +1,14 @@
 import { z } from 'zod';
-import { Roles, ShiftStatus, SwapStatus } from './roles';
+import {
+  Roles,
+  ShiftStatus,
+  SwapStatus,
+  SubscriptionStatus,
+  SubscriptionChangeType,
+  SubscriptionChangeStatus,
+  PaymentStatus,
+  InvoiceStatus,
+} from './roles';
 
 export const UserSchema = z.object({
   id: z.string().uuid(),
@@ -165,4 +174,115 @@ export interface PaginatedResponse<T> {
   nextCursor: string | null;
   hasMore: boolean;
 }
+
+export const SubscriptionPlanSchema = z.object({
+  code: z.string().min(1),
+  name: z.string().min(1),
+  pricePerSeatMinor: z.number().int().nonnegative(),
+  maxSeats: z.number().int().nonnegative(),
+  currency: z.string().min(3),
+});
+
+export type SubscriptionPlan = z.infer<typeof SubscriptionPlanSchema>;
+
+export const TeamSubscriptionSchema = z.object({
+  teamId: z.string().uuid(),
+  planCode: z.string().min(1),
+  seats: z.number().int().positive(),
+  status: z.nativeEnum(SubscriptionStatus),
+  periodStartedAt: isoDate(),
+  periodEndsAt: isoDate(),
+  hasFailedRenewal: z.boolean(),
+  graceEndsAt: isoDate().nullable(),
+  createdAt: isoDate(),
+  updatedAt: isoDate(),
+});
+
+export type TeamSubscription = z.infer<typeof TeamSubscriptionSchema>;
+
+export const SubscriptionChangeSchema = z.object({
+  id: z.string().uuid(),
+  teamId: z.string().uuid(),
+  actorId: z.string().uuid(),
+  type: z.nativeEnum(SubscriptionChangeType),
+  fromPlanCode: z.string().nullable(),
+  toPlanCode: z.string().nullable(),
+  fromSeats: z.number().int().positive().nullable(),
+  toSeats: z.number().int().positive().nullable(),
+  amountMinor: z.number().int().nonnegative(),
+  status: z.nativeEnum(SubscriptionChangeStatus),
+  createdAt: isoDate(),
+});
+
+export type SubscriptionChange = z.infer<typeof SubscriptionChangeSchema>;
+
+export const PaymentTransactionSchema = z.object({
+  id: z.string().uuid(),
+  teamId: z.string().uuid(),
+  changeId: z.string().uuid().nullable(),
+  txRef: z.string().min(1),
+  flwTransactionId: z.string().nullable(),
+  amountMinor: z.number().int().nonnegative(),
+  currency: z.string().min(3),
+  status: z.nativeEnum(PaymentStatus),
+  createdAt: isoDate(),
+});
+
+export type PaymentTransaction = z.infer<typeof PaymentTransactionSchema>;
+
+export const BillingInvoiceSchema = z.object({
+  id: z.string().uuid(),
+  teamId: z.string().uuid(),
+  changeId: z.string().uuid().nullable(),
+  amountMinor: z.number().int().nonnegative(),
+  description: z.string().min(1),
+  status: z.nativeEnum(InvoiceStatus),
+  createdAt: isoDate(),
+  paidAt: isoDate().nullable(),
+});
+
+export type BillingInvoice = z.infer<typeof BillingInvoiceSchema>;
+
+export const BillingSummarySchema = z.object({
+  subscription: TeamSubscriptionSchema
+    .omit({ createdAt: true, updatedAt: true })
+    .extend({
+      planName: z.string(),
+      planPricePerSeatMinor: z.number().int().nonnegative(),
+      planMaxSeatsExempt: z.boolean(),
+    }),
+  seatsUsed: z.number().int().nonnegative(),
+  pendingInvites: z.number().int().nonnegative(),
+  seatCapacity: z.number().int().nonnegative(),
+  pendingPayment: PaymentTransactionSchema.nullable().optional(),
+  latestFailedRenewal: PaymentTransactionSchema.nullable().optional(),
+});
+
+export type BillingSummary = z.infer<typeof BillingSummarySchema>;
+
+export const CreateCheckoutSchema = z.object({
+  planCode: z.string().trim().min(1),
+  seats: z.number().int().positive().optional(),
+});
+
+export type CreateCheckoutInput = z.infer<typeof CreateCheckoutSchema>;
+
+export const VerifyPaymentSchema = z.object({
+  txRef: z.string().trim().min(1),
+  transactionId: z.string().trim().min(1),
+});
+
+export type VerifyPaymentInput = z.infer<typeof VerifyPaymentSchema>;
+
+export const UpdateSeatsSchema = z.object({
+  seats: z.number().int().positive(),
+});
+
+export type UpdateSeatsInput = z.infer<typeof UpdateSeatsSchema>;
+
+export const ChangeSubscriptionSchema = z.object({
+  planCode: z.string().trim().min(1),
+});
+
+export type ChangeSubscriptionInput = z.infer<typeof ChangeSubscriptionSchema>;
 

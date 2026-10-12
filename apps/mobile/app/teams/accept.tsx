@@ -1,7 +1,11 @@
 import { useState } from 'react';
-import { View, Text, TextInput, Button, StyleSheet, Alert } from 'react-native';
+import { View, Text, StyleSheet, Alert } from 'react-native';
 import { router } from 'expo-router';
 import { apiClient } from '../../src/api/client';
+import { Screen } from '../../src/components/ui/Screen';
+import { Input } from '../../src/components/ui/Input';
+import { Button } from '../../src/components/ui/Button';
+import { typography, spacing } from '../../src/components/ui/theme';
 
 export default function AcceptInvitationScreen() {
   const [token, setToken] = useState('');
@@ -9,6 +13,7 @@ export default function AcceptInvitationScreen() {
 
   const handleAccept = async () => {
     if (!token.trim()) return Alert.alert('Error', 'Token is required');
+
     setLoading(true);
     const res = await apiClient.request('/invitations/accept', {
       method: 'POST',
@@ -17,30 +22,46 @@ export default function AcceptInvitationScreen() {
     setLoading(false);
 
     if (res.success) {
-      Alert.alert('Success', 'Invitation accepted!');
-      router.replace('/teams');
+      Alert.alert('Success', 'You have joined the team');
+      router.replace('/');
     } else {
       Alert.alert('Error', res.error?.message || 'Failed to accept invitation');
     }
   };
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Accept Invitation</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="Paste invitation token here"
+    <Screen style={styles.container}>
+      <Text style={[typography.h2, { marginBottom: spacing.lg }]}>Join a Team</Text>
+      <Text style={[typography.body, { marginBottom: spacing.xl }]}>
+        Enter the invitation token provided by your team manager or owner.
+      </Text>
+
+      <Input
+        label="Invitation Token"
+        placeholder="Paste token here"
         value={token}
         onChangeText={setToken}
+        editable={!loading}
       />
-      <Button title={loading ? 'Accepting...' : 'Accept'} onPress={handleAccept} disabled={loading} />
-      <Button title="Cancel" onPress={() => router.back()} color="gray" />
-    </View>
+
+      <View style={styles.actions}>
+        <Button
+          title={loading ? 'Joining...' : 'Join Team'}
+          onPress={handleAccept}
+          loading={loading}
+        />
+        <Button
+          title="Cancel"
+          variant="ghost"
+          onPress={() => router.back()}
+          disabled={loading}
+        />
+      </View>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, backgroundColor: '#fff', justifyContent: 'center' },
-  title: { fontSize: 24, fontWeight: 'bold', marginBottom: 20, textAlign: 'center' },
-  input: { borderWidth: 1, borderColor: '#ccc', padding: 10, marginBottom: 10, borderRadius: 5 }
+  container: { padding: spacing.xl, paddingTop: spacing.xxl },
+  actions: { marginTop: spacing.xl, gap: spacing.md }
 });

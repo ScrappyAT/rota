@@ -9,7 +9,9 @@
   "scripts": {
     "dev:api": "npm run dev -w @rota/api",
     "dev:mobile": "npm run dev -w @rota/mobile",
-    "build:api": "npm run build -w @rota/api",
+    "build:shared": "npm run build -w @rota/shared",
+    "build:api": "npm run build:shared && npm run build -w @rota/api",
+    "build": "npm run build:shared && npm run build -w @rota/api",
     "lint": "npm run lint --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",

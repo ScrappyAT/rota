@@ -1,8 +1,13 @@
 import { useState } from 'react';
-import { View, Text, TextInput, Button, StyleSheet, Alert } from 'react-native';
+import { View, Text, StyleSheet, Alert } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { apiClient } from '../../src/api/client';
 import { Roles, Role } from '@rota/shared';
+import { Screen } from '../../src/components/ui/Screen';
+import { Input } from '../../src/components/ui/Input';
+import { Button } from '../../src/components/ui/Button';
+import { Card } from '../../src/components/ui/Card';
+import { typography, spacing, colors } from '../../src/components/ui/theme';
 
 export default function InviteMemberScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -12,6 +17,8 @@ export default function InviteMemberScreen() {
   const [token, setToken] = useState('');
 
   const handleInvite = async () => {
+    if (!email.trim()) return Alert.alert('Error', 'Email is required');
+
     setLoading(true);
     const res = await apiClient.request<{ token: string }>(`/invitations/team/${id}`, {
       method: 'POST',
@@ -28,39 +35,62 @@ export default function InviteMemberScreen() {
   };
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Invite Member</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="Email Address"
+    <Screen style={styles.container}>
+      <Text style={[typography.h2, { marginBottom: spacing.lg }]}>Invite Member</Text>
+
+      <Input
+        label="Email Address"
+        placeholder="Enter user email"
         value={email}
         onChangeText={setEmail}
         autoCapitalize="none"
         keyboardType="email-address"
+        editable={!loading}
       />
+
       <View style={styles.roleContainer}>
-        <Button title={`Role: ${role}`} onPress={() => setRole(role === Roles.STAFF ? Roles.MANAGER : Roles.STAFF)} />
+        <Text style={typography.label}>Role</Text>
+        <Button
+          title={`Currently selected: ${role}`}
+          variant="secondary"
+          onPress={() => setRole(role === Roles.STAFF ? Roles.MANAGER : Roles.STAFF)}
+          style={{ marginTop: spacing.xs }}
+        />
       </View>
-      <Button title={loading ? 'Inviting...' : 'Invite'} onPress={handleInvite} disabled={loading} />
-      
+
+      <Button
+        title={loading ? 'Inviting...' : 'Send Invitation'}
+        onPress={handleInvite}
+        loading={loading}
+      />
+
       {token ? (
-        <View style={styles.tokenContainer}>
-          <Text style={styles.tokenLabel}>Share this token:</Text>
+        <Card style={styles.tokenContainer}>
+          <Text style={typography.label}>Share this token:</Text>
           <Text style={styles.tokenText}>{token}</Text>
-        </View>
+        </Card>
       ) : null}
-      
-      <Button title="Back" onPress={() => router.back()} color="gray" />
-    </View>
+
+      <View style={{ marginTop: spacing.xl }}>
+        <Button title="Back" variant="ghost" onPress={() => router.back()} />
+      </View>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, backgroundColor: '#fff', justifyContent: 'center' },
-  title: { fontSize: 24, fontWeight: 'bold', marginBottom: 20, textAlign: 'center' },
-  input: { borderWidth: 1, borderColor: '#ccc', padding: 10, marginBottom: 10, borderRadius: 5 },
-  roleContainer: { marginBottom: 20 },
-  tokenContainer: { marginTop: 20, padding: 15, backgroundColor: '#eef', borderRadius: 8, marginBottom: 20 },
-  tokenLabel: { fontWeight: 'bold' },
-  tokenText: { fontFamily: 'monospace', marginTop: 5 }
+  container: { padding: spacing.xl },
+  roleContainer: { marginBottom: spacing.xl, marginTop: spacing.md },
+  tokenContainer: {
+    marginTop: spacing.xl,
+    backgroundColor: colors.secondary,
+    borderColor: colors.primary,
+  },
+  tokenText: {
+    fontFamily: 'monospace',
+    marginTop: spacing.sm,
+    fontSize: 18,
+    color: colors.primaryDark,
+    fontWeight: 'bold',
+  }
 });

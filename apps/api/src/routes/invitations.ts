@@ -5,6 +5,7 @@ import { authenticate, AuthRequest } from '../middleware/auth';
 import { requireRole } from '../middleware/tenant';
 import { Roles } from '@rota/shared';
 import { addActivity } from '../services/activity';
+import { assertCanGrow } from '../billing/service';
 
 const router = Router();
 
@@ -20,32 +21,49 @@ router.post('/team/:teamId', requireRole([Roles.OWNER, Roles.MANAGER]), async (r
       return res.status(400).json({ success: false, error: { code: 'BAD_REQUEST', message: 'Invalid payload' } });
     }
 
-    const myRoleRes = await pool.query('SELECT role FROM team_memberships WHERE team_id = $1 AND user_id = $2', [teamId, req.user!.id]);
-    const myRole = myRoleRes.rows[0].role;
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
 
-    if (myRole === Roles.MANAGER && role !== Roles.STAFF) {
-      return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Managers can only invite staff' } });
-    }
+      const myRoleRes = await client.query('SELECT role FROM team_memberships WHERE team_id = $1 AND user_id = $2', [teamId, req.user!.id]);
+      const myRole = myRoleRes.rows[0].role;
 
-    // Check if user is already a member
-    const existingUser = await pool.query('SELECT id FROM users WHERE email = $1', [email.toLowerCase()]);
-    if (existingUser.rows.length > 0) {
-      const existingMember = await pool.query('SELECT id FROM team_memberships WHERE team_id = $1 AND user_id = $2', [teamId, existingUser.rows[0].id]);
-      if (existingMember.rows.length > 0) {
-        return res.status(400).json({ success: false, error: { code: 'ALREADY_MEMBER', message: 'User is already in the team' } });
+      if (myRole === Roles.MANAGER && role !== Roles.STAFF) {
+        await client.query('ROLLBACK');
+        return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Managers can only invite staff' } });
       }
+
+      // Subscription gates: the team must be active and have seats available
+      // for the additional member this invitation represents.
+      await assertCanGrow(client, teamId, new Date(), 1);
+
+      // Check if user is already a member
+      const existingUser = await client.query('SELECT id FROM users WHERE email = $1', [email.toLowerCase()]);
+      if (existingUser.rows.length > 0) {
+        const existingMember = await client.query('SELECT id FROM team_memberships WHERE team_id = $1 AND user_id = $2', [teamId, existingUser.rows[0].id]);
+        if (existingMember.rows.length > 0) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ success: false, error: { code: 'ALREADY_MEMBER', message: 'User is already in the team' } });
+        }
+      }
+
+      const token = crypto.randomBytes(32).toString('hex');
+      const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+      const expiresAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000); // 3 days
+
+      await client.query(
+        'INSERT INTO invitations (team_id, email, role, token_hash, inviter_id, expires_at) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (team_id, email) WHERE accepted_at IS NULL DO UPDATE SET token_hash = EXCLUDED.token_hash, expires_at = EXCLUDED.expires_at, role = EXCLUDED.role, inviter_id = EXCLUDED.inviter_id',
+        [teamId, email.toLowerCase(), role, tokenHash, req.user!.id, expiresAt]
+      );
+
+      await client.query('COMMIT');
+      res.status(201).json({ success: true, data: { token } }); // Shareable token
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
     }
-
-    const token = crypto.randomBytes(32).toString('hex');
-    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-    const expiresAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000); // 3 days
-
-    await pool.query(
-      'INSERT INTO invitations (team_id, email, role, token_hash, inviter_id, expires_at) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (team_id, email) WHERE accepted_at IS NULL DO UPDATE SET token_hash = EXCLUDED.token_hash, expires_at = EXCLUDED.expires_at, role = EXCLUDED.role, inviter_id = EXCLUDED.inviter_id',
-      [teamId, email.toLowerCase(), role, tokenHash, req.user!.id, expiresAt]
-    );
-
-    res.status(201).json({ success: true, data: { token } }); // Shareable token
   } catch (error) {
     next(error);
   }
@@ -72,7 +90,7 @@ router.post('/accept', async (req: AuthRequest, res, next) => {
     if (!token) return res.status(400).json({ success: false, error: { code: 'BAD_REQUEST', message: 'Token is required' } });
 
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-    
+
     const client = await pool.connect();
     try {
       await client.query('BEGIN');

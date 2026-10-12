@@ -24,6 +24,48 @@ This document describes the implemented architecture of the Rota application.
    port **5440**) and Redis 7 (host port **6380**). `.env` at the repo root
    targets these ports.
 
+## Architecture Diagram
+
+```mermaid
+flowchart LR
+    subgraph Mobile[Expo app - apps/mobile]
+        UI[Screens + React Query]
+        API_CLIENT[src/api/* - apiClient]
+        TOKEN[SecureStore - access/refresh/team]
+        UI --> API_CLIENT
+        API_CLIENT --> TOKEN
+    end
+
+    subgraph API[Express API - apps/api]
+        RATE[rate limiters:<br/>/auth 100, /teams 300,<br/>/invitations 300 in-memory;<br/>/devices 200 Redis]
+        AUTH[auth + requireRole RBAC]
+        ROUTES[teams / shifts / swaps /<br/>activity / subscription /<br/>invitations / devices]
+        PUSH[notifications service -> Expo push]
+        RATE --> AUTH --> ROUTES
+        ROUTES --> PUSH
+    end
+
+    subgraph Data[(PostgreSQL 15)]
+        MIG[runner - migrations table]
+        TX[explicit transactions + activity events]
+    end
+
+    subgraph Cache[(Redis 7)]
+        RL[rl:devices fixed-window]
+        HEALTH[health probe]
+    end
+
+    API_CLIENT -->|HTTPS /health + ApiResponse envelope| RATE
+    ROUTES --> TX
+    ROUTES --> Cache
+    TX --> Data
+    MIG --> Data
+    PUSH -->|FCM/APNs| Mobile
+```
+
+Everything crosses the wire wrapped in the `ApiResponse` envelope; every
+team-scoped route sits behind `authenticate` + `requireRole`.
+
 ## Response & Error Envelope
 
 Every endpoint returns the `ApiResponse<T>` envelope: `{ success, data?,
@@ -43,7 +85,7 @@ the refresh token once and retrying the request (single-flight).
 - Mutations that touch activity write `activity_events` rows transactionally
   with the data change; the feed is reads-only.
 
-## Endpoint Inventory (Phase 1–3)
+## Endpoint Inventory (Phase 1–4)
 
 Auth (`/auth`): `POST /register`, `POST /login`, `POST /refresh`,
 `POST /logout`, `GET /me`. Rate-limited (100 req / 15 min / IP).
@@ -83,6 +125,61 @@ Activity — nested under `/teams/:teamId/activity`:
 
 - `GET /` — feed, cursor paginated, optional `type` filter.
 
+Push notifications & devices — nested under `/devices`, **authenticated**,
+Redis-backed rate limited (200 req / 15 min / IP):
+
+- `POST /devices` — register an Expo push token for the current user.
+- `GET /devices` — list the user's registered devices.
+- `DELETE /devices/:deviceId` — unregister.
+- `GET /devices/preferences` — push preferences (booleans for
+  shift-assigned, swap-requested/approved/rejected events).
+- `PATCH /devices/preferences` — update preferences.
+
+Shifts and swap writes call `services/notifications` which writes a
+`notifications` row (deduped by a deterministic `event_key`) and forwards to
+the Expo push service for users with a registered device and the event enabled.
+
+## Billing & Subscriptions (Phase 4)
+
+Billing is nested under `/teams/:teamId/subscription`, **OWNER only**
+(except the public `/billing` routes below). Design and money model in
+`docs/BILLING.md`.
+
+- `GET /` — enrollment summary (plan, seats, usage, capacity, pending payment,
+  latest failed renewal, `billingEnabled`).
+- `GET /plans` — plan catalog (FREE/STARTER/GROWTH/SCALE), ascending price.
+- `POST /checkout` — `{ planCode, seats? }`; prorated charge or immediate apply.
+- `POST /seats` — `{ seats }` on the current plan.
+- `POST /renew` — one full period at current configuration.
+- `POST /verify` — `{ txRef, transactionId }`; reconciles a gateway
+  verification server-side.
+- `GET /changes` — subscription change history, cursor paginated.
+- `GET /billing` — invoice history, cursor paginated.
+
+Public:
+
+- `POST /billing/webhook/flutterwave` — Flutterwave webhook receiver
+  (`verif-hash` header check, `event_key` dedupe, guarded settlement).
+  Rate limited (300 req / 15 min / IP).
+- `GET /billing/redirect` — non-secret landing page after hosted checkout.
+
+Implementation notes:
+
+- Money is integer minor units everywhere; only the Flutterwave client converts
+  to/from the currency's major unit (`apps/api/src/billing/flutterwave.ts`).
+- The gateway module is the single seam to external HTTP. Integration tests
+  mock `initializeCheckout`/`verifyTransaction` while keeping webhook hash
+  validation real (`apps/api/src/billing/flutterwave.ts`).
+- Domain logic lives in `apps/api/src/billing/service.ts` (state transitions,
+  seat capacity, change/renewal computation, reconciliation) and
+  `proration.ts` (pure math, unit-tested).
+- Billing cross-cutting gates: `assertCanGrow` in invitation create,
+  `assertSubscriptionActive` in shift create (`apps/api/src/billing/service.ts`).
+- Two new activity event types: `SUBSCRIPTION_CHANGED`, `PAYMENT_RECEIVED`.
+- New env config: `BILLING_CURRENCY`, `BILLING_PERIOD_DAYS`,
+  `SUBSCRIPTION_GRACE_DAYS`, `FLW_ENV`, `FLW_BASE_URL`, `FLW_SECRET_KEY`,
+  `FLW_PUBLIC_KEY`, `FLW_SECRET_HASH` (see `apps/api/src/env.ts`).
+
 ## Cursor Pagination
 
 Keyset pagination over a stable total order `(timestamp, id)` — no `OFFSET`.
@@ -97,8 +194,22 @@ inside the transaction. See `docs/SECURITY.md`.
 
 ## Known Gaps (accepted)
 
-- `cors()` is open (`*`) — dev posture only; restrict before deployment.
-- No rate limiting on `/teams` and `/invitations`.
-- Redis connected but not yet used beyond the health check.
+- CORS is a comma-separated `CORS_ORIGIN` allow-list; default `*` is a dev
+  posture only, and `env.ts` refuses `*` in production. Real origins are
+  set at deploy time (see `docs/DEPLOYMENT.md`).
+- `/auth` (100), `/teams` (300), and `/invitations` (300) limits are in-memory
+  per instance; only `/devices` (200) is shared via Redis. Under horizontal
+  scaling the in-memory limits become per-pod.
+- Redis is used by the `/health` probe and the `/devices` rate limiter —
+  no general cache layer yet.
+- Push notifications deliver through Expo's hosted service; delivery
+  confirmation/receipts and in-app foreground handling are still being wired
+  in the mobile app.
 - Mobile runtime (navigation, list behavior) has not been exercised on a
   device; see `docs/IMPLEMENTATION-STATUS.md`.
+
+## Deployment & performance
+
+- Packaging, Railway runbook, and env reference: `docs/DEPLOYMENT.md`.
+- k6 load-testing harness, thresholds, and runbook: `docs/PERFORMANCE-TESTING.md`.
+- Graduation close-out checklist: `docs/SUBMISSION.md`.

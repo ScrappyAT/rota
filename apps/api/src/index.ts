@@ -1,25 +1,31 @@
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { env } from './env';
 import { pool } from './db';
 import { redisClient } from './redis';
 import { errorHandler } from './error-handler';
+import { createCorsMiddleware } from './cors';
+import { redisRateLimit } from './middleware/rate-limit-redis';
 import { ApiResponse } from '@rota/shared';
 
 import authRouter from './routes/auth';
 import teamsRouter from './routes/teams';
 import invitationsRouter from './routes/invitations';
+import billingRouter from './routes/billing';
+import devicesRouter from './routes/devices';
 
 const app = express();
-app.use(cors());
+app.use(helmet({ frameguard: { action: 'deny' } }));
+app.use(cors(createCorsMiddleware(env.CORS_ORIGIN)));
 app.use(express.json());
 
 app.get('/health', async (req, res, next) => {
   try {
     const dbStatus = await pool.query('SELECT 1').then(() => 'ok').catch(() => 'error');
     const redisStatus = redisClient.isReady ? 'ok' : 'error';
-    
+
     const response: ApiResponse<{ status: string; db: string; redis: string; timestamp: string }> = {
       success: true,
       data: {
@@ -41,9 +47,23 @@ const apiLimiter = rateLimit({
   message: { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Try again later' } }
 });
 
+// Credential-adjacent mutating endpoints: team mutations and invitations.
+const teamsLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 300,
+  message: { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Try again later' } }
+});
+const invitationsLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 300,
+  message: { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Try again later' } }
+});
+
 app.use('/auth', apiLimiter, authRouter);
-app.use('/teams', teamsRouter);
-app.use('/invitations', invitationsRouter);
+app.use('/teams', teamsLimiter, teamsRouter);
+app.use('/invitations', invitationsLimiter, invitationsRouter);
+app.use('/devices', redisRateLimit({ windowSeconds: 15 * 60, max: 200, keyPrefix: 'rl:devices' }), devicesRouter);
+app.use('/billing', billingRouter);
 
 app.use(errorHandler);
 

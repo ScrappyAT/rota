@@ -1,9 +1,13 @@
 import { useState } from 'react';
-import { View, Text, TextInput, Button, StyleSheet, Alert } from 'react-native';
+import { View, Text, StyleSheet, Alert } from 'react-native';
 import { router } from 'expo-router';
 import { apiClient } from '../../src/api/client';
 import { useAuth } from '../../src/context/AuthContext';
 import { AuthResponse } from '@rota/shared';
+import { Screen } from '../../src/components/ui/Screen';
+import { Input } from '../../src/components/ui/Input';
+import { Button } from '../../src/components/ui/Button';
+import { typography, spacing } from '../../src/components/ui/theme';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -12,6 +16,9 @@ export default function LoginScreen() {
   const { login } = useAuth();
 
   const handleLogin = async () => {
+    if (!email || !password) {
+      return Alert.alert('Error', 'Please enter email and password');
+    }
     setLoading(true);
     const res = await apiClient.request<AuthResponse>('/auth/login', {
       method: 'POST',
@@ -21,59 +28,78 @@ export default function LoginScreen() {
 
     if (res.success && res.data) {
       await login(res.data);
-      router.replace('/(tabs)/');
+      router.replace('/');
     } else {
       Alert.alert('Login failed', res.error?.message || 'Unknown error');
     }
   };
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Login to Rota</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="Email"
-        value={email}
-        onChangeText={setEmail}
-        autoCapitalize="none"
-        keyboardType="email-address"
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Password"
-        value={password}
-        onChangeText={setPassword}
-        secureTextEntry
-      />
-      <Button title={loading ? 'Logging in...' : 'Login'} onPress={handleLogin} disabled={loading} />
-      <View style={styles.linkContainer}>
-        <Button title="Don't have an account? Register" onPress={() => router.push('/(auth)/register')} />
+    <Screen style={styles.container}>
+      <View style={styles.header}>
+        <Text style={typography.h1}>Welcome Back</Text>
+        <Text style={[typography.body, { marginTop: spacing.sm }]}>Sign in to Rota</Text>
       </View>
-    </View>
+
+      <View style={styles.form}>
+        <Input
+          label="Email Address"
+          placeholder="Enter your email"
+          value={email}
+          onChangeText={setEmail}
+          autoCapitalize="none"
+          keyboardType="email-address"
+          editable={!loading}
+          returnKeyType="next"
+        />
+        <Input
+          label="Password"
+          placeholder="Enter your password"
+          value={password}
+          onChangeText={setPassword}
+          secureTextEntry
+          editable={!loading}
+          returnKeyType="done"
+          onSubmitEditing={handleLogin}
+        />
+        <Button
+          title={loading ? 'Logging in...' : 'Login'}
+          onPress={handleLogin}
+          loading={loading}
+          style={styles.button}
+        />
+      </View>
+
+      <View style={styles.footer}>
+        <Text style={typography.bodySmall}>Don't have an account?</Text>
+        <Button
+          title="Create an account"
+          variant="ghost"
+          onPress={() => router.push('/(auth)/register')}
+          disabled={loading}
+        />
+      </View>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
-    justifyContent: 'center',
-    padding: 20,
-    backgroundColor: '#fff',
+    padding: spacing.xl,
+    paddingTop: spacing.xxl,
   },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 20,
-    textAlign: 'center',
+  header: {
+    marginBottom: spacing.xl,
+    alignItems: 'center',
   },
-  input: {
-    borderWidth: 1,
-    borderColor: '#ccc',
-    padding: 10,
-    marginBottom: 10,
-    borderRadius: 5,
+  form: {
+    width: '100%',
   },
-  linkContainer: {
-    marginTop: 20,
+  button: {
+    marginTop: spacing.md,
+  },
+  footer: {
+    marginTop: spacing.xxl,
+    alignItems: 'center',
   }
 });

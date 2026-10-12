@@ -1,12 +1,19 @@
 import { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, Button, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, StyleSheet, FlatList, ActivityIndicator, Alert, TouchableOpacity } from 'react-native';
 import { router } from 'expo-router';
 import { apiClient } from '../../src/api/client';
 import { Team } from '@rota/shared';
+import { Screen } from '../../src/components/ui/Screen';
+import { Card } from '../../src/components/ui/Card';
+import { Button } from '../../src/components/ui/Button';
+import { typography, spacing, colors, borderRadius } from '../../src/components/ui/theme';
+import { useTeam } from '../../src/context/TeamContext';
 
 export default function TeamsScreen() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [loading, setLoading] = useState(true);
+  const { team, selectTeam } = useTeam();
+  const activeTeamId = team?.id;
 
   useEffect(() => {
     loadTeams();
@@ -23,38 +30,80 @@ export default function TeamsScreen() {
     }
   };
 
+  const handleSelectTeam = async (id: string) => {
+    await selectTeam(id);
+    router.replace('/');
+  };
+
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Your Teams</Text>
-      
+    <Screen style={styles.container}>
+      <Text style={[typography.h2, { marginBottom: spacing.lg }]}>Your Teams</Text>
+
       {loading ? (
-        <ActivityIndicator size="large" />
+        <ActivityIndicator size="large" color={colors.primary} />
       ) : (
         <FlatList
           data={teams}
           keyExtractor={item => item.id}
+          scrollEnabled={false}
           renderItem={({ item }) => (
-            <View style={styles.teamCard}>
-              <Text style={styles.teamName}>{item.name}</Text>
-              <Button title="Manage" onPress={() => router.push(`/teams/${item.id}`)} />
-            </View>
+            <TouchableOpacity onPress={() => handleSelectTeam(item.id)} activeOpacity={0.8}>
+              <Card style={[styles.teamCard, activeTeamId === item.id ? styles.activeCard : undefined]}>
+                <View>
+                  <Text style={typography.h3}>{item.name}</Text>
+                  {activeTeamId === item.id && (
+                    <Text style={[typography.label, { color: colors.primary, marginTop: spacing.xs }]}>
+                      Currently Active
+                    </Text>
+                  )}
+                </View>
+                <Button
+                  title="Manage"
+                  size="small"
+                  variant="secondary"
+                  onPress={() => router.push(`/teams/${item.id}`)}
+                />
+              </Card>
+            </TouchableOpacity>
           )}
-          ListEmptyComponent={<Text>You are not part of any teams.</Text>}
+          ListEmptyComponent={
+            <View style={styles.emptyState}>
+              <Text style={typography.bodySmall}>You are not part of any teams.</Text>
+            </View>
+          }
         />
       )}
 
       <View style={styles.actions}>
         <Button title="Create New Team" onPress={() => router.push('/teams/create')} />
-        <Button title="Accept Invitation" onPress={() => router.push('/teams/accept')} />
+        <Button title="Join with Invitation" variant="secondary" onPress={() => router.push('/teams/accept')} />
       </View>
-    </View>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, backgroundColor: '#fff' },
-  title: { fontSize: 24, fontWeight: 'bold', marginBottom: 20 },
-  teamCard: { padding: 15, borderWidth: 1, borderColor: '#ccc', borderRadius: 8, marginBottom: 10, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  teamName: { fontSize: 18 },
-  actions: { marginTop: 20, gap: 10 }
+  container: {
+    padding: spacing.md,
+  },
+  teamCard: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: spacing.lg,
+  },
+  activeCard: {
+    borderColor: colors.primary,
+    borderWidth: 2,
+  },
+  emptyState: {
+    padding: spacing.xl,
+    alignItems: 'center',
+    backgroundColor: colors.card,
+    borderRadius: borderRadius.lg,
+  },
+  actions: {
+    marginTop: spacing.xl,
+    gap: spacing.md,
+  }
 });
