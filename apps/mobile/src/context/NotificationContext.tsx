@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { useAuth } from './AuthContext';
 import { queryClient } from '../query/queryClient';
@@ -26,6 +27,13 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   const responseSubRef = useRef<{ remove: () => void } | null>(null);
 
   useEffect(() => {
+    // Unsupported on web: prevent Expo push notification listeners from registering on web
+    if (Platform.OS === 'web') {
+      setPushToken(null);
+      setIsRegistered(false);
+      return;
+    }
+
     if (!user?.id) {
       setPushToken(null);
       setIsRegistered(false);

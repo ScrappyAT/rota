@@ -27,3 +27,5 @@ npm-debug.log*
 Thumbs.db
 .idea/
 .vscode/
+# Firebase Android configuration
+apps/mobile/google-services.json

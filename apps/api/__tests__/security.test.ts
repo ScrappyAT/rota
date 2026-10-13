@@ -38,10 +38,13 @@ describe('Helmet security headers', () => {
 });
 
 describe('CORS middleware', () => {
-  const miniApp = (originConfig: string) => {
+  const miniApp = (originConfig: string, extraOrigins: string[] = []) => {
     const mini = express();
-    mini.use(cors(createCorsMiddleware(originConfig)));
+    const middleware = cors(createCorsMiddleware(originConfig, extraOrigins));
+    mini.use(middleware);
+    mini.options('*', middleware);
     mini.get('/x', (_req, res) => res.json({ ok: true }));
+    mini.post('/x', (_req, res) => res.json({ created: true }));
     mini.use(errorHandler);
     return mini;
   };
@@ -74,6 +77,81 @@ describe('CORS middleware', () => {
   it('allows same-origin / no-Origin requests', async () => {
     const res = await request(miniApp('https://app.rota.example')).get('/x');
     expect(res.status).toBe(200);
+  });
+
+  it('allows http://localhost:8081 development origin and blocks unauthorized origin', async () => {
+    const appWithDev = miniApp('https://rota-production-84ef.up.railway.app,http://localhost:8081');
+
+    // Allowed development origin
+    const devRes = await request(appWithDev)
+      .get('/x')
+      .set('Origin', 'http://localhost:8081');
+    expect(devRes.status).toBe(200);
+    expect(devRes.headers['access-control-allow-origin']).toBe('http://localhost:8081');
+
+    // Unauthorized origin remains blocked
+    const blockedRes = await request(appWithDev)
+      .get('/x')
+      .set('Origin', 'http://unauthorized.example');
+    expect(blockedRes.status).toBe(403);
+    expect(blockedRes.body.success).toBe(false);
+    expect(blockedRes.body.error.code).toBe('CORS_BLOCKED');
+  });
+
+  it('handles OPTIONS preflight correctly for http://localhost:8081 with required headers and methods', async () => {
+    const appWithDev = miniApp('https://rota-production-84ef.up.railway.app,http://localhost:8081');
+
+    const preflightRes = await request(appWithDev)
+      .options('/x')
+      .set('Origin', 'http://localhost:8081')
+      .set('Access-Control-Request-Method', 'POST')
+      .set('Access-Control-Request-Headers', 'Content-Type, Authorization');
+
+    expect(preflightRes.status).toBe(204);
+    expect(preflightRes.headers['access-control-allow-origin']).toBe('http://localhost:8081');
+    expect(preflightRes.headers['access-control-allow-methods']).toContain('POST');
+    expect(preflightRes.headers['access-control-allow-methods']).toContain('GET');
+    expect(preflightRes.headers['access-control-allow-headers']).toContain('Content-Type');
+    expect(preflightRes.headers['access-control-allow-headers']).toContain('Authorization');
+  });
+
+  it('rejects preflight OPTIONS requests from unauthorized origins with CORS_BLOCKED', async () => {
+    const appWithDev = miniApp('https://rota-production-84ef.up.railway.app,http://localhost:8081');
+
+    const preflightBlocked = await request(appWithDev)
+      .options('/x')
+      .set('Origin', 'http://evil.example')
+      .set('Access-Control-Request-Method', 'POST')
+      .set('Access-Control-Request-Headers', 'Content-Type, Authorization');
+
+    expect(preflightBlocked.status).toBe(403);
+    expect(preflightBlocked.body.success).toBe(false);
+    expect(preflightBlocked.body.error.code).toBe('CORS_BLOCKED');
+  });
+
+  it('handles OPTIONS preflight on /auth/register and API routes in the main application', async () => {
+    // Development preflight on /auth/register
+    const preflight = await request(app)
+      .options('/auth/register')
+      .set('Origin', 'http://localhost:8081')
+      .set('Access-Control-Request-Method', 'POST')
+      .set('Access-Control-Request-Headers', 'Content-Type, Authorization');
+
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers['access-control-allow-origin']).toBe('http://localhost:8081');
+    expect(preflight.headers['access-control-allow-headers']).toContain('Content-Type');
+    expect(preflight.headers['access-control-allow-headers']).toContain('Authorization');
+
+    // Unauthorized origin preflight on /auth/register
+    const unauthorizedPreflight = await request(app)
+      .options('/auth/register')
+      .set('Origin', 'http://unauthorized.example')
+      .set('Access-Control-Request-Method', 'POST')
+      .set('Access-Control-Request-Headers', 'Content-Type, Authorization');
+
+    expect(unauthorizedPreflight.status).toBe(403);
+    expect(unauthorizedPreflight.body.success).toBe(false);
+    expect(unauthorizedPreflight.body.error.code).toBe('CORS_BLOCKED');
   });
 });
 

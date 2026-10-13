@@ -1,5 +1,5 @@
 import { ApiResponse } from '@rota/shared';
-import * as SecureStore from 'expo-secure-store';
+import { authStorage } from '../storage/authStorage';
 
 export const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.101:3000';
 
@@ -13,8 +13,8 @@ class ApiClient {
 
     this.refreshInFlight = (async () => {
       try {
-        const refreshToken = await SecureStore.getItemAsync('refreshToken');
-        const userId = await SecureStore.getItemAsync('userId');
+        const refreshToken = await authStorage.getItemAsync('refreshToken');
+        const userId = await authStorage.getItemAsync('userId');
         if (!refreshToken || !userId) return false;
 
         const response = await fetch(`${API_URL}/auth/refresh`, {
@@ -25,14 +25,14 @@ class ApiClient {
         const body = await response.json();
 
         if (response.ok && body?.success && body?.data) {
-          await SecureStore.setItemAsync('accessToken', body.data.accessToken);
-          await SecureStore.setItemAsync('refreshToken', body.data.refreshToken);
+          await authStorage.setItemAsync('accessToken', body.data.accessToken);
+          await authStorage.setItemAsync('refreshToken', body.data.refreshToken);
           return true;
         }
 
-        await SecureStore.deleteItemAsync('accessToken');
-        await SecureStore.deleteItemAsync('refreshToken');
-        await SecureStore.deleteItemAsync('userId');
+        await authStorage.deleteItemAsync('accessToken');
+        await authStorage.deleteItemAsync('refreshToken');
+        await authStorage.deleteItemAsync('userId');
         return false;
       } catch {
         return false;
@@ -44,9 +44,17 @@ class ApiClient {
     return this.refreshInFlight;
   }
 
-  private async authHeaders(): Promise<Record<string, string>> {
-    const accessToken = await SecureStore.getItemAsync('accessToken');
-    return accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
+  private async authHeaders(endpoint?: string): Promise<Record<string, string>> {
+    // Unauthenticated requests should never fail or send auth headers
+    if (endpoint && (AUTH_ENDPOINTS.some((path) => endpoint.startsWith(path)) || endpoint === '/health')) {
+      return {};
+    }
+    try {
+      const accessToken = await authStorage.getItemAsync('accessToken');
+      return accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
+    } catch {
+      return {};
+    }
   }
 
   private networkListeners: Set<(isOnline: boolean) => void> = new Set();
@@ -75,7 +83,7 @@ class ApiClient {
         ...options,
         headers: {
           'Content-Type': 'application/json',
-          ...(await this.authHeaders()),
+          ...(await this.authHeaders(endpoint)),
           ...options.headers,
         },
       });
@@ -85,7 +93,7 @@ class ApiClient {
           ...options,
           headers: {
             'Content-Type': 'application/json',
-            ...(await this.authHeaders()),
+            ...(await this.authHeaders(endpoint)),
             ...options.headers,
           },
         });

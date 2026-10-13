@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState } from 'react';
-import * as SecureStore from 'expo-secure-store';
+import { authStorage } from '../storage/authStorage';
 import { User, AuthResponse } from '@rota/shared';
 import { apiClient } from '../api/client';
 import { queryClient } from '../query/queryClient';
@@ -28,9 +28,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const setActiveTeamId = async (id: string | null) => {
     setActiveTeamIdState(id);
     if (id) {
-      await SecureStore.setItemAsync('activeTeamId', id);
+      await authStorage.setItemAsync('activeTeamId', id);
     } else {
-      await SecureStore.deleteItemAsync('activeTeamId');
+      await authStorage.deleteItemAsync('activeTeamId');
     }
   };
 
@@ -52,9 +52,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = async (data: AuthResponse) => {
     setUser(data.user);
-    await SecureStore.setItemAsync('accessToken', data.accessToken);
-    await SecureStore.setItemAsync('refreshToken', data.refreshToken);
-    await SecureStore.setItemAsync('userId', data.user.id);
+    await authStorage.setItemAsync('accessToken', data.accessToken);
+    await authStorage.setItemAsync('refreshToken', data.refreshToken);
+    await authStorage.setItemAsync('userId', data.user.id);
   };
 
   const logout = async () => {
@@ -64,7 +64,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     queryClient.clear();
 
-    const refreshToken = await SecureStore.getItemAsync('refreshToken');
+    const refreshToken = await authStorage.getItemAsync('refreshToken');
     if (refreshToken) {
       await apiClient.request('/auth/logout', {
         method: 'POST',
@@ -73,10 +73,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     setUser(null);
     setActiveTeamIdState(null);
-    await SecureStore.deleteItemAsync('accessToken');
-    await SecureStore.deleteItemAsync('refreshToken');
-    await SecureStore.deleteItemAsync('userId');
-    await SecureStore.deleteItemAsync('activeTeamId');
+    await authStorage.deleteItemAsync('accessToken');
+    await authStorage.deleteItemAsync('refreshToken');
+    await authStorage.deleteItemAsync('userId');
+    await authStorage.deleteItemAsync('activeTeamId');
   };
 
   let isRefreshing = false;
@@ -85,9 +85,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (isRefreshing) return;
     isRefreshing = true;
     try {
-      const refreshToken = await SecureStore.getItemAsync('refreshToken');
-      const userId = await SecureStore.getItemAsync('userId');
-      const savedTeamId = await SecureStore.getItemAsync('activeTeamId');
+      const refreshToken = await authStorage.getItemAsync('refreshToken');
+      const userId = await authStorage.getItemAsync('userId');
+      const savedTeamId = await authStorage.getItemAsync('activeTeamId');
 
       if (savedTeamId) {
         setActiveTeamIdState(savedTeamId);
@@ -101,13 +101,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         if (res.success && res.data) {
           setUser(res.data.user);
-          await SecureStore.setItemAsync('accessToken', res.data.accessToken);
-          await SecureStore.setItemAsync('refreshToken', res.data.refreshToken);
+          await authStorage.setItemAsync('accessToken', res.data.accessToken);
+          await authStorage.setItemAsync('refreshToken', res.data.refreshToken);
         } else {
           setUser(null);
-          await SecureStore.deleteItemAsync('accessToken');
-          await SecureStore.deleteItemAsync('refreshToken');
-          await SecureStore.deleteItemAsync('userId');
+          await authStorage.deleteItemAsync('accessToken');
+          await authStorage.deleteItemAsync('refreshToken');
+          await authStorage.deleteItemAsync('userId');
         }
       }
     } catch {

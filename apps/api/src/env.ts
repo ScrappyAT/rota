@@ -24,9 +24,21 @@ const envSchema = z
     BILLING_CURRENCY: z.string().default('NGN'),
     BILLING_PERIOD_DAYS: z.coerce.number().int().positive().default(30),
     SUBSCRIPTION_GRACE_DAYS: z.coerce.number().int().nonnegative().default(14),
-    // Comma-separated allow-list of browser origins. '*' (default) is a dev
-    // posture; production requires an explicit allow-list.
-    CORS_ORIGIN: z.string().default('*'),
+    // Comma-separated allow-list of browser origins.
+    // In development, defaults to allowing Expo web development (http://localhost:8081).
+    // Production requires an explicit allow-list. Supports CORS_ORIGIN, CORS_ORIGINS, ALLOWED_ORIGINS.
+    CORS_ORIGIN: z
+      .string()
+      .optional()
+      .transform((val) => {
+        if (typeof val === 'string' && val.trim().length > 0) return val;
+        return (
+          process.env.CORS_ORIGIN ||
+          process.env.CORS_ORIGINS ||
+          process.env.ALLOWED_ORIGINS ||
+          (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:8081,*')
+        );
+      }),
     // Expo push service endpoint (override only in tests/self-hosted setups).
     EXPO_PUSH_URL: z
       .string()
@@ -56,7 +68,12 @@ const envSchema = z
         message: 'FLW_SECRET_HASH must be explicitly set when NODE_ENV=production',
       });
     }
-    if (!process.env.CORS_ORIGIN || process.env.CORS_ORIGIN === '*') {
+    const corsEnv =
+      process.env.CORS_ORIGIN ||
+      process.env.CORS_ORIGINS ||
+      process.env.ALLOWED_ORIGINS ||
+      cfg.CORS_ORIGIN;
+    if (!corsEnv || corsEnv === '*') {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['CORS_ORIGIN'],

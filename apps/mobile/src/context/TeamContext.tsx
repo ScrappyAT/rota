@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react';
-import * as SecureStore from 'expo-secure-store';
+import { authStorage } from '../storage/authStorage';
 import { apiClient } from '../api/client';
 import { dataOrThrow } from '../api/ensure';
 import { useAuth } from './AuthContext';
@@ -45,10 +45,10 @@ export function TeamProvider({ children }: { children: React.ReactNode }) {
       const list = dataOrThrow(await apiClient.request<Team[]>('/teams'));
       setTeams(list);
 
-      let selected = await SecureStore.getItemAsync(SELECTED_TEAM_KEY);
+      let selected = await authStorage.getItemAsync(SELECTED_TEAM_KEY);
       if (!selected || !list.some((t) => t.id === selected)) {
         selected = list[0]?.id ?? null;
-        if (selected) await SecureStore.setItemAsync(SELECTED_TEAM_KEY, selected);
+        if (selected) await authStorage.setItemAsync(SELECTED_TEAM_KEY, selected);
       }
       setTeamId(selected);
 
@@ -80,7 +80,7 @@ export function TeamProvider({ children }: { children: React.ReactNode }) {
 
   const selectTeam = useCallback(async (nextId: string) => {
     setTeamId(nextId);
-    await SecureStore.setItemAsync(SELECTED_TEAM_KEY, nextId);
+    await authStorage.setItemAsync(SELECTED_TEAM_KEY, nextId);
     await loadTeams();
   }, [loadTeams]);
 

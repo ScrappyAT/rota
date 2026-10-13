@@ -1,7 +1,7 @@
 import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
-import * as SecureStore from 'expo-secure-store';
+import { authStorage } from '../storage/authStorage';
 import { AsyncStorage } from '../storage/asyncStorage';
 import { registerDevice, unregisterDevice } from '../api/devices';
 import { router } from 'expo-router';
@@ -9,19 +9,21 @@ import { router } from 'expo-router';
 // Default EAS Project ID from app.json
 const FALLBACK_PROJECT_ID = '8294edea-eb20-41b3-b9f3-154b44593873';
 
-// Configure foreground notification behavior
-try {
-  Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-      shouldShowAlert: true,
-      shouldPlaySound: true,
-      shouldSetBadge: false,
-      shouldShowBanner: true,
-      shouldShowList: true,
-    }),
-  });
-} catch (err) {
-  console.warn('[push] Failed to set notification handler:', err);
+// Configure foreground notification behavior (native only; unsupported on web without service worker)
+if (Platform.OS !== 'web') {
+  try {
+    Notifications.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowAlert: true,
+        shouldPlaySound: true,
+        shouldSetBadge: false,
+        shouldShowBanner: true,
+        shouldShowList: true,
+      }),
+    });
+  } catch (err) {
+    console.warn('[push] Failed to set notification handler:', err);
+  }
 }
 
 /**
@@ -123,7 +125,7 @@ export async function registerForPushNotificationsAsync(userId: string): Promise
 
     if (res.success) {
       await AsyncStorage.setItem(cacheKey, token);
-      await SecureStore.setItemAsync('devicePushToken', token);
+      await authStorage.setItemAsync('devicePushToken', token);
       console.log(`[push] Registered device token: ${maskedToken} (platform: ${platform})`);
     } else {
       console.warn(`[push] Backend registration failed:`, res.error?.message);
@@ -144,12 +146,12 @@ export async function registerForPushNotificationsAsync(userId: string): Promise
  */
 export async function unregisterCurrentDevice(): Promise<void> {
   try {
-    const token = await SecureStore.getItemAsync('devicePushToken');
+    const token = await authStorage.getItemAsync('devicePushToken');
     if (token) {
       const maskedToken = token.length > 12 ? `${token.slice(0, 10)}...` : '***';
       console.log(`[push] Unregistering device token: ${maskedToken}`);
       await unregisterDevice(token);
-      await SecureStore.deleteItemAsync('devicePushToken');
+      await authStorage.deleteItemAsync('devicePushToken');
     }
   } catch (err) {
     console.warn(

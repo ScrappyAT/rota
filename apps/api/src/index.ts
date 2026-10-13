@@ -6,7 +6,7 @@ import { env } from './env';
 import { pool } from './db';
 import { redisClient } from './redis';
 import { errorHandler } from './error-handler';
-import { createCorsMiddleware } from './cors';
+import { createCorsMiddleware, DEFAULT_DEV_ORIGINS } from './cors';
 import { redisRateLimit } from './middleware/rate-limit-redis';
 import { ApiResponse } from '@rota/shared';
 
@@ -16,9 +16,14 @@ import invitationsRouter from './routes/invitations';
 import billingRouter from './routes/billing';
 import devicesRouter from './routes/devices';
 
+const isDev = env.NODE_ENV !== 'production';
+const devOrigins = isDev ? DEFAULT_DEV_ORIGINS : [];
+const corsMiddleware = cors(createCorsMiddleware(env.CORS_ORIGIN, devOrigins));
+
 const app = express();
 app.use(helmet({ frameguard: { action: 'deny' } }));
-app.use(cors(createCorsMiddleware(env.CORS_ORIGIN)));
+app.use(corsMiddleware);
+app.options('*', corsMiddleware);
 app.use(express.json());
 
 app.get('/health', async (req, res, next) => {

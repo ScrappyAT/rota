@@ -20,7 +20,8 @@
       },
       "predictiveBackGestureEnabled": false,
       "softwareKeyboardLayoutMode": "resize",
-      "package": "com.scrappy4rlsteam.rota"
+      "package": "com.scrappy4rlsteam.rota",
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "bundler": "metro",

@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Exports / coverage
+coverage/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Expo
+.expo/
+
+# k6 output
+k6/output/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+# Firebase Android configuration
+apps/mobile/google-services.json
+
+!apps/mobile/google-services.json

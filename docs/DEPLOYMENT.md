@@ -56,7 +56,7 @@ never commit them or put them in logs.
 | `REDIS_URL` | **yes** | e.g. `redis://host:6379`. |
 | `JWT_SECRET` | **yes** [secret] | Enforced non-default when `NODE_ENV=production`. |
 | `JWT_REFRESH_SECRET` | no | Currently unused (refresh tokens are opaque); kept for parity. |
-| `CORS_ORIGIN` | **yes** | Comma-separated origin allow-list; `*` is refused in production. For a mobile-only API this can be the web preview origin. |
+| `CORS_ORIGIN` | **yes** | Comma-separated origin allow-list (aliases `CORS_ORIGINS`, `ALLOWED_ORIGINS` supported); `*` is refused in production. Include `http://localhost:8081` to allow local Expo web development against the deployed API. |
 | `FLW_SECRET_KEY` | **yes** [secret] | Flutterwave secret key (test key for sandbox). |
 | `FLW_SECRET_HASH` | **yes** [secret] | Flutterwave webhook `verif-hash` value. |
 | `FLW_PUBLIC_KEY` | yes for checkout | Public key passed to hosted checkout. |
