@@ -15,6 +15,10 @@ export interface SwapRequest {
   shiftTitle: string;
   shiftStartsAt: string;
   shiftEndsAt: string;
+  requesterName?: string | null;
+  requesterEmail?: string | null;
+  offeredToName?: string | null;
+  offeredToEmail?: string | null;
 }
 
 export interface ListOptions {

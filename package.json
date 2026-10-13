@@ -18,7 +18,8 @@
     "db:start": "docker compose -f infrastructure/docker-compose.yml up -d",
     "db:stop": "docker compose -f infrastructure/docker-compose.yml down",
     "db:migrate": "npm run db:migrate -w @rota/api",
-    "db:seed:activity": "npm run db:seed:activity -w @rota/api"
+    "db:seed:activity": "npm run db:seed:activity -w @rota/api",
+    "db:seed:dataset": "npm run db:seed:dataset -w @rota/api"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

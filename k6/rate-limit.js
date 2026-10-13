@@ -35,8 +35,9 @@ export const options = {
     },
   },
   thresholds: {
-    // Prove the limiter actually engages: most post-budget requests are 429s.
-    rota_rate_limited: ['count>33'],
+    // Prove the limiter actually engages: with ATTEMPTS = BUDGET + 20, exactly
+    // 20 requests must be throttled by the /teams budget.
+    rota_rate_limited: ['count>1'],
     http_req_duration: ['p(95)<150'],
   },
 };

@@ -25,7 +25,11 @@ const SWAP_COLUMNS = `
   sr.created_at as "createdAt",
   s.title as "shiftTitle",
   s.starts_at as "shiftStartsAt",
-  s.ends_at as "shiftEndsAt"
+  s.ends_at as "shiftEndsAt",
+  NULLIF(TRIM(CONCAT(req_u.first_name, ' ', req_u.last_name)), '') as "requesterName",
+  req_u.email as "requesterEmail",
+  NULLIF(TRIM(CONCAT(off_u.first_name, ' ', off_u.last_name)), '') as "offeredToName",
+  off_u.email as "offeredToEmail"
 `;
 
 const reviewerRole = async (client: import('pg').PoolClient, teamId: string, userId: string) => {
@@ -76,6 +80,8 @@ router.get('/', async (req: AuthRequest, res, next) => {
       `SELECT ${SWAP_COLUMNS}
        FROM swap_requests sr
        JOIN shifts s ON s.id = sr.shift_id
+       LEFT JOIN users req_u ON req_u.id = sr.requested_by
+       LEFT JOIN users off_u ON off_u.id = sr.offered_to
        WHERE ${conditions.join(' AND ')}
        ORDER BY sr.created_at DESC, sr.id DESC
        LIMIT $${n}`,

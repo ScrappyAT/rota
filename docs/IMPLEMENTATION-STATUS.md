@@ -10,7 +10,7 @@ Status categories:
 - **Not started**
 - **Blocked** — cannot proceed until a listed dependency is resolved.
 
-Last full validation: 2026-10-08 (see "Validation history").
+Last full validation: 2026-10-13 (see "Validation history").
 
 ---
 
@@ -59,7 +59,10 @@ Last full validation: 2026-10-08 (see "Validation history").
   unaffected).
 - `/auth` (100), `/teams` (300), and `/invitations` (300) rate limits are
   in-memory per instance; only `/devices` (200) is shared via Redis. Fine for
-  single-instance deploys, per-pod under horizontal scaling.
+  single-instance deploys, per-pod under horizontal scaling. Budgets are
+  overridable via `AUTH_RATE_LIMIT_MAX` / `TEAMS_RATE_LIMIT_MAX` /
+  `INVITATIONS_RATE_LIMIT_MAX` for load-test instances (defaults unchanged;
+  see `docs/PERFORMANCE-REPORT.md` §5).
 
 ## Phase 3 — Shifts, Swaps, Activity
 
@@ -75,7 +78,7 @@ cursor design and measured plans, `docs/PHASE-3-TEST-REPORT.md` for evidence.
 | Activity feed + activity writes | Completed & verified | 10 event types; written in the same transaction as mutations |
 | Incoming activity on `MEMBER_JOINED` | Completed & verified | Hooked into invitation accept |
 | Cursor pagination (timestamp + id) | Completed & verified | Keyset on `(created_at|starts_at, id)`; limit+1; no OFFSET; `INVALID_CURSOR` → 400 |
-| 10,000-record seed script (`db:seed:activity`) | Completed & verified | Idempotent reruns; `--reset` scoped to `payload->>'source'='seed'`; 10,000 rows live |
+| 10,000-record seed script (`db:seed:dataset`) | Completed & verified | Deterministic multi-tenant seed (40 users / 5 teams / 500 shifts / 1,226 assignments / 154 swaps / 10,000 activity rows); rebuilt to identical rows on every run |
 | Mobile shift list, infinite scroll, pull-to-refresh | Implemented, not independently verified | Type-checks; runtime not exercised on a device |
 | Mobile shift detail + create screen | Implemented, not independently verified | Assign/unassign/swap actions wired; type-checks |
 | Mobile swaps + activity screens | Implemented, not independently verified | Infinite lists + approve/reject/cancel mutations; type-checks |
@@ -116,7 +119,7 @@ for evidence.
 | Settings synchronization | Not started | Requires user settings table + API |
 | Redis usage | Partially implemented | Health probe + `/devices` Redis-backed rate limiter; no general cache layer |
 | PostgreSQL sharding simulation | Not started | Needs design decision (logical shards by team_id) |
-| Load testing (k6 harness) | Implemented, not independently verified | `k6/**` scripts + `docs/PERFORMANCE-TESTING.md`; k6 not yet installed/executed here — no benchmark numbers claimed |
+| Load testing (k6 harness) | Completed & verified | `k6/**` scripts executed via Docker against a 10,000-row live seed — see `docs/PERFORMANCE-REPORT.md`; budgets env-configurable for dev instances |
 | Android development build | Completed & verified | EAS development build running on physical Samsung test device |
 | Deployment packaging (Docker + Railway) | Implemented, not independently verified | `Dockerfile`, `.dockerignore`, `railway.json`, `docs/DEPLOYMENT.md`; image not yet built/deployed in this session |
 | Demo video | Not started | Blocked on deployed host being reachable during recording |
@@ -131,7 +134,8 @@ Executed against the live local Docker Postgres (5440) and Redis (6380), both mi
 |---|---|---|
 | Typecheck | `npm run typecheck` | PASS (api, mobile, shared — 0 errors) |
 | Lint | `npm run lint` | PASS — 0 errors, pre-existing warnings tolerated |
-| Tests | `npm test` | PASS — 11 suites, **135 tests passed** |
+| Tests | `npm test` (2026-10-13) | PASS — 14 suites, **182 tests passed** |
+| Load | `k6` via Docker vs 10,000-row seed (2026-10-13) | PASS — see `docs/PERFORMANCE-REPORT.md` |
 
 Test breakdown:
 
@@ -158,11 +162,24 @@ Test breakdown:
   duplicate / bad-hash / unknown-ref handling, and settlement rollback on
   amount/currency mismatch. See `docs/PHASE-4-TEST-REPORT.md`.
   `maxWorkers: 1` keeps all DB suites from racing on shared tables.
+- `large-dataset.test.ts` — 11 tests (live DB, 10,000+ activity rows):
+  distribution across 5 teams / 12 types, deterministic re-seed (count +
+  `hashtext` fingerprint), tenant isolation 404s, gapless ordered walk of
+  team0's feed, `type` filter gaplessness, `INVALID_CURSOR` 400, `limit`
+  clamp to 50 + invalid-limit 400, single-row/bulk page order agreement,
+  exact members count, swaps pagination + STAFF scoping, shifts pagination.
 
 Phase 3 was validated against a live database seeded with **10,000 activity
 rows** (see `docs/PHASE-3-TEST-REPORT.md` and `docs/PAGINATION.md`).
 Phase 4 was validated with the gateway module mocked (no sandbox credentials);
 the live hosted-checkout and webhook delivery path is unverified.
+
+On 2026-10-13 the full k6 suite (health, smoke, baseline, workload,
+cursor-walk, auth, rate-limit) was executed against that 10,000-row seed:
+30,115 requests in the peak workload (60 VUs) at **0% errors**, `p95 62.7 ms` /
+`p99 167.9 ms`; cursor soak `p95 24.5 ms` / `p99 64.6 ms`; exactly 20/320
+requests throttled past the `/teams` budget. Numbers and methodology are in
+`docs/PERFORMANCE-REPORT.md`.
 
 Supersedes `docs/PHASE-2-TEST-REPORT.md` (which reports the earlier 10-test
 run and remains as a historical record).

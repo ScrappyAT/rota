@@ -41,6 +41,12 @@ const PREF_COLUMN: Record<NotificationType, string> = {
 /** Maps a notification type to its `notification_preferences` column. */
 export const prefColumn = (type: NotificationType): string => PREF_COLUMN[type];
 
+/** Masks device push tokens for safe diagnostic logging without leaking credentials. */
+export const maskToken = (token: string): string => {
+  if (!token) return '***';
+  return token.length > 12 ? `${token.slice(0, 10)}...` : '***';
+};
+
 /** Builds an Expo Push API message body for the event's devices. */
 export const buildExpoMessage = (event: NotificationEvent, tokens: string[]) => ({
   to: tokens.slice(0, EXPO_MAX_TOKENS_PER_REQUEST),
@@ -48,6 +54,7 @@ export const buildExpoMessage = (event: NotificationEvent, tokens: string[]) => 
   body: event.body,
   data: event.data ?? {},
   sound: 'default',
+  channelId: 'shifts',
 });
 
 /**
@@ -76,6 +83,7 @@ export const classifyExpoResponse = (payload: unknown, tokens: string[]): ExpoSe
       return;
     }
     const error = entry.details?.error ?? '';
+    log('warn', `expo ticket error for device [${maskToken(token)}]: ${error || 'UnknownError'}`);
     if (PERMANENT_TOKEN_ERRORS.has(error)) {
       invalidTokens.push(token);
     }
@@ -93,10 +101,11 @@ export const formatShiftDate = (iso: string | Date): string => {
 
 // --- Purely internal logging (never logs raw tokens or message bodies) -----
 
-const log = (level: 'error' | 'warn', message: string) => {
+const log = (level: 'error' | 'warn' | 'info', message: string) => {
   const line = `[notifications] ${message}`;
   if (level === 'error') console.error(line);
-  else console.warn(line);
+  else if (level === 'warn') console.warn(line);
+  else console.log(line);
 };
 
 // --- Delivery ----------------------------------------------------------------
@@ -159,6 +168,7 @@ const pruneInvalidTokens = async (userId: string, tokens: string[]): Promise<voi
 
 const postToExpo = async (message: Record<string, unknown>, eventKey: string): Promise<ExpoSendResult> => {
   const tokens = Array.isArray(message.to) ? (message.to as string[]) : [];
+  log('info', `posting to expo for ${eventKey} with ${tokens.length} token(s) [${tokens.map(maskToken).join(', ')}]`);
   const response = await fetch(env.EXPO_PUSH_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
@@ -172,7 +182,9 @@ const postToExpo = async (message: Record<string, unknown>, eventKey: string): P
     return { okCount: 0, invalidTokens: [] };
   }
   const payload = (await response.json()) as unknown;
-  return classifyExpoResponse(payload, tokens);
+  const result = classifyExpoResponse(payload, tokens);
+  log('info', `expo push result for ${eventKey}: ${result.okCount} ok, ${result.invalidTokens.length} invalid`);
+  return result;
 };
 
 /**
@@ -182,6 +194,7 @@ const postToExpo = async (message: Record<string, unknown>, eventKey: string): P
  */
 export const deliverNotification = async (event: NotificationEvent): Promise<void> => {
   try {
+    log('info', `dispatching ${event.type} for recipient ${event.userId} (eventKey: ${event.eventKey})`);
     const prefs = await pool.query(
       `SELECT shift_assigned, swap_requested, swap_approved, swap_rejected
        FROM notification_preferences
@@ -191,6 +204,7 @@ export const deliverNotification = async (event: NotificationEvent): Promise<voi
     const enabled =
       prefs.rows.length === 0 ? true : prefs.rows[0][prefColumn(event.type)] === true;
     if (!enabled) {
+      log('info', `notification ${event.eventKey} skipped: disabled in preferences for user ${event.userId}`);
       await markNotificationStatus(event.eventKey, 'SKIPPED', 'disabled by user preference');
       return;
     }
@@ -201,6 +215,7 @@ export const deliverNotification = async (event: NotificationEvent): Promise<voi
     );
     const tokens: string[] = tokensRes.rows.map((row) => row.token);
     if (tokens.length === 0) {
+      log('info', `notification ${event.eventKey} skipped: no registered device tokens for user ${event.userId}`);
       await markNotificationStatus(event.eventKey, 'SKIPPED', 'no registered device');
       return;
     }

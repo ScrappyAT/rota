@@ -96,7 +96,10 @@ EXPO_PUBLIC_API_URL=https://<railway-host> npx eas-cli build --profile productio
 - Each API instance keeps an in-memory rate-limit budget for `/auth` (100),
   `/teams` (300), and `/invitations` (300) per 15 min / IP; the `/devices`
   limiter (200 per 15 min / IP) is shared via Redis, so horizontal scaling
-  keeps that one accurate while the in-memory ones are per-instance.
+  keeps that one accurate while the in-memory ones are per-instance. Budgets
+  default via `AUTH_RATE_LIMIT_MAX` / `TEAMS_RATE_LIMIT_MAX` /
+  `INVITATIONS_RATE_LIMIT_MAX` (100/300/300) and are overridable for
+  load-test instances — see `docs/PERFORMANCE-REPORT.md` §5.
 - Multi-replica: memory limiters become per-POD. Single rail is fine for the
   graduation demo; scale out only after load-testing (see
   `docs/PERFORMANCE-TESTING.md`).

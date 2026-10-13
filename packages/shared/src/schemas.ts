@@ -108,6 +108,13 @@ export const SwapRequestSchema = z.object({
   reviewedBy: z.string().uuid().nullable().optional(),
   reviewedAt: isoDate().nullable().optional(),
   createdAt: isoDate(),
+  shiftTitle: z.string().optional(),
+  shiftStartsAt: isoDate().optional(),
+  shiftEndsAt: isoDate().optional(),
+  requesterName: z.string().nullable().optional(),
+  requesterEmail: z.string().nullable().optional(),
+  offeredToName: z.string().nullable().optional(),
+  offeredToEmail: z.string().nullable().optional(),
 });
 
 export type SwapRequest = z.infer<typeof SwapRequestSchema>;

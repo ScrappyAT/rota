@@ -48,19 +48,19 @@ app.get('/health', async (req, res, next) => {
 
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: env.AUTH_RATE_LIMIT_MAX,
   message: { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Try again later' } }
 });
 
 // Credential-adjacent mutating endpoints: team mutations and invitations.
 const teamsLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 300,
+  max: env.TEAMS_RATE_LIMIT_MAX,
   message: { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Try again later' } }
 });
 const invitationsLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 300,
+  max: env.INVITATIONS_RATE_LIMIT_MAX,
   message: { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Try again later' } }
 });
 

@@ -37,7 +37,7 @@ flowchart LR
     end
 
     subgraph API[Express API - apps/api]
-        RATE[rate limiters:<br/>/auth 100, /teams 300,<br/>/invitations 300 in-memory;<br/>/devices 200 Redis]
+        RATE[rate limiters:<br/>/auth 100, /teams 300,<br/>/invitations 300 in-memory;<br/>/devices 200 Redis;<br/>budgets env-overridable]
         AUTH[auth + requireRole RBAC]
         ROUTES[teams / shifts / swaps /<br/>activity / subscription /<br/>invitations / devices]
         PUSH[notifications service -> Expo push]

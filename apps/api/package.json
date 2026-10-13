@@ -9,6 +9,7 @@
     "start": "node dist/index.js",
     "db:migrate": "ts-node src/migrate.ts",
     "db:seed:activity": "ts-node scripts/seed-activity.ts",
+    "db:seed:dataset": "ts-node scripts/seed-dataset.ts",
     "lint": "eslint src/**/*.ts",
     "typecheck": "tsc --noEmit",
     "test": "jest"

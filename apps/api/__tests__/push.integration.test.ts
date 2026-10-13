@@ -194,7 +194,7 @@ describe('Push Notifications Integration', () => {
     expect(lastPushBody().to).toEqual([charlieDevice]);
   });
 
-  it('8. A targeted swap request notifies the offered user', async () => {
+  it('8. A targeted swap request notifies the owner and the offered user, and populates display names', async () => {
     const bobShift = await request(app).post(`/teams/${teamAId}/shifts`).set('Authorization', `Bearer ${aliceToken}`).send({
       title: 'Night shift',
       startsAt: '2026-10-13T18:00:00.000Z',
@@ -208,15 +208,35 @@ describe('Push Notifications Integration', () => {
     });
     expect(swap.status).toBe(201);
 
-    const { rows } = await pool.query(
+    const { rows: charlieNotifs } = await pool.query(
       `SELECT status, body FROM notifications WHERE user_id = $1 AND type = 'SWAP_REQUESTED'`,
       [charlieId]
     );
-    expect(rows).toHaveLength(1);
-    expect(rows[0].status).toBe('SENT');
-    expect(String(rows[0].body)).toContain('Bob Push');
-    expect(String(rows[0].body)).toContain('Night shift');
+    expect(charlieNotifs).toHaveLength(1);
+    expect(charlieNotifs[0].status).toBe('SENT');
+    expect(String(charlieNotifs[0].body)).toContain('Bob Push');
+    expect(String(charlieNotifs[0].body)).toContain('Night shift');
     expect(lastPushBody().to).toEqual([charlieDevice]);
+
+    // Alice (team OWNER) was also notified of the swap request
+    const { rows: aliceNotifs } = await pool.query(
+      `SELECT status, body FROM notifications WHERE user_id = $1 AND type = 'SWAP_REQUESTED'`,
+      [aliceId]
+    );
+    expect(aliceNotifs).toHaveLength(1);
+    expect(aliceNotifs[0].status).toBe('SENT');
+    expect(String(aliceNotifs[0].body)).toContain('Bob Push');
+    expect(String(aliceNotifs[0].body)).toContain('Night shift');
+
+    // GET /swaps returns requesterName, requesterEmail, offeredToName, offeredToEmail
+    const listRes = await request(app).get(`/teams/${teamAId}/swaps`).set('Authorization', `Bearer ${aliceToken}`);
+    expect(listRes.status).toBe(200);
+    const item = listRes.body.data.items.find((s: { id: string }) => s.id === swap.body.data.id);
+    expect(item).toBeDefined();
+    expect(item.requesterName).toBe('Bob Push');
+    expect(item.requesterEmail).toBe('push-bob@test.com');
+    expect(item.offeredToName).toBe('Charlie Push');
+    expect(item.offeredToEmail).toBe('push-charlie@test.com');
   });
 
   it('9. Rejecting a targeted swap notifies the requester', async () => {
@@ -256,6 +276,38 @@ describe('Push Notifications Integration', () => {
     expect(notifs[0].status).toBe('SENT');
     expect(fetchMock.mock.calls.length).toBe(callsBefore + 1);
     expect(lastPushBody().to).toEqual([bobDevice]);
+  });
+
+  it('10b. An open swap request notifies the owner', async () => {
+    const charlieShift = await request(app).post(`/teams/${teamAId}/shifts`).set('Authorization', `Bearer ${aliceToken}`).send({
+      title: 'Morning shift',
+      startsAt: '2026-10-15T08:00:00.000Z',
+      endsAt: '2026-10-15T16:00:00.000Z',
+      assigneeIds: [charlieId],
+    });
+    expect(charlieShift.status).toBe(201);
+    const shift3Id = charlieShift.body.data.id;
+
+    const openSwap = await request(app).post(`/teams/${teamAId}/shifts/${shift3Id}/swaps`).set('Authorization', `Bearer ${charlieToken}`).send({
+      reason: 'Personal errand',
+    });
+    expect(openSwap.status).toBe(201);
+
+    const { rows: ownerNotifs } = await pool.query(
+      `SELECT status, body FROM notifications WHERE user_id = $1 AND event_key = $2`,
+      [aliceId, `swap_requested:${openSwap.body.data.id}:admin:${aliceId}`]
+    );
+    expect(ownerNotifs).toHaveLength(1);
+    expect(ownerNotifs[0].status).toBe('SENT');
+    expect(String(ownerNotifs[0].body)).toContain('Charlie Push');
+    expect(String(ownerNotifs[0].body)).toContain('Morning shift');
+
+    const listRes = await request(app).get(`/teams/${teamAId}/swaps`).set('Authorization', `Bearer ${aliceToken}`);
+    const item = listRes.body.data.items.find((s: { id: string }) => s.id === openSwap.body.data.id);
+    expect(item).toBeDefined();
+    expect(item.offeredTo).toBeNull();
+    expect(item.offeredToName).toBeNull();
+    expect(item.requesterName).toBe('Charlie Push');
   });
 
   it('11. A disabled preference marks the notification SKIPPED without a push', async () => {

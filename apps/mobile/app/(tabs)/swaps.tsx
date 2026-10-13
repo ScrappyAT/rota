@@ -21,9 +21,22 @@ interface SwapItem {
   shiftStartsAt: string;
   shiftEndsAt: string;
   createdAt: string;
+  requesterName?: string | null;
+  requesterEmail?: string | null;
+  offeredToName?: string | null;
+  offeredToEmail?: string | null;
 }
 
-const shortId = (id: string | null) => (id ? id.slice(0, 8) : '—');
+const formatRequester = (item: SwapItem) =>
+  item.requesterName || item.requesterEmail || (item.requestedBy ? item.requestedBy.slice(0, 8) : 'Teammate');
+
+const formatOfferedTo = (item: SwapItem) => {
+  if (!item.offeredTo) {
+    return 'Open request (any teammate)';
+  }
+  const name = item.offeredToName || item.offeredToEmail || item.offeredTo.slice(0, 8);
+  return `Offered to ${name}`;
+};
 
 export default function SwapsScreen() {
   const { team, role } = useTeam();
@@ -100,7 +113,9 @@ export default function SwapsScreen() {
           <Text style={styles.status}>{item.status}</Text>
         </View>
         <Text style={styles.cardMeta}>{formatRange(item.shiftStartsAt, item.shiftEndsAt)}</Text>
-        <Text style={styles.cardMeta}>Requested by {shortId(item.requestedBy)} · offered to {shortId(item.offeredTo)}</Text>
+        <Text style={styles.cardMeta}>
+          Requested by {formatRequester(item)} · {formatOfferedTo(item)}
+        </Text>
         {item.reason ? <Text style={styles.reason}>“{item.reason}”</Text> : null}
         <Text style={styles.time}>{timeAgo(item.createdAt)}</Text>
 

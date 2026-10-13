@@ -26,8 +26,22 @@ Verify: `k6 version`.
    npm run dev:api
    ```
 
-2. A test user + team with seeded data. **Never point the seeded/user create at
-   production.** A quick local setup using the public API:
+2. A seeded database. `scripts/seed-dataset.ts` builds a deterministic
+   multi-tenant world (users, teams, shifts, assignments, swaps, and activity)
+   and is the recommended way to produce the large feed the load tests expect.
+   **Never point it at production.**
+
+   ```
+   npm run db:seed:dataset                 # defaults: 40 users / 5 teams / 500 shifts / 10k activity
+   npm run db:seed:dataset -w @rota/api -- --users 40 --teams 5 --shifts 500 --activity 10000
+   ```
+
+   (Because npm forwards arguments one level only, passing flags requires the
+   workspace-level form above; the bare root script accepts defaults.)
+
+   Seed accounts log in with the password `seed-only-account` (e.g.
+   `seed.user.1@loadtest.local`). For a fully API-driven user, register one and
+   give them a team using the steps below.
 
    ```
    curl -s http://localhost:3000/auth/register -H 'Content-Type: application/json' \
@@ -39,15 +53,6 @@ Verify: `k6 version`.
      -H 'Content-Type: application/json' -d '{"name":"Load Test Team"}'
    # capture the returned team id.
    ```
-
-   Then seed 10,000 activity rows:
-
-   ```
-   npm run db:seed:activity -- --team <team-uuid> --count 10000
-   ```
-
-   Create a handful of shifts through the API or SQL; the workload mix reads
-   `shifts`, `activity`, and `members` only.
 
 ## Env vars
 
@@ -62,14 +67,32 @@ Verify: `k6 version`.
 
 ## Run
 
-Ordered from least to most intrusive — run `rate-limit.js` last and on a
-dedicated stress instance (it exhausts the source IP's 15-minute budget):
+Ordered from least to most intrusive; `auth.js` and `rate-limit.js` consume the
+request limiter budgets (`/auth` 100 / 15 min; `/teams` 300 / 15 min) so run
+them sparingly and late:
 
 ```
 k6 run k6/health.js
+k6 run k6/smoke.js   -e USER_EMAIL=<..> -e USER_PASSWORD=<..> -e TEAM_ID=<..>
+k6 run k6/baseline.js -e USER_EMAIL=<..> -e USER_PASSWORD=<..> -e TEAM_ID=<..>
 k6 run k6/workload.js -e USER_EMAIL=<..> -e USER_PASSWORD=<..> -e TEAM_ID=<..>
 k6 run k6/cursor-walk.js -e USER_EMAIL=<..> -e USER_PASSWORD=<..> -e TEAM_ID=<..>
+k6 run k6/auth.js    -e USER_EMAIL=<..> -e USER_PASSWORD=<..>   # ~65 /auth requests, one window
 k6 run k6/rate-limit.js     # last, against a disposable instance
 ```
 
 Every script is read-only: no harness script creates or mutates records.
+
+### Running from a machine without k6 (Docker)
+
+k6 is not bundled on this dev machine; run the suite through the official
+image instead. The build runs in its own container, so on Windows Docker
+Desktop the API host is `host.docker.internal`:
+
+```
+docker run --rm -v "$PWD/k6:/scripts" -i grafana/k6 run /scripts/health.js
+docker run --rm -v "$PWD/k6:/scripts" -i grafana/k6 run /scripts/smoke.js `
+  -e BASE_URL=http://host.docker.internal:3000 `
+  -e USER_EMAIL=<..> -e USER_PASSWORD=<..> -e TEAM_ID=<..>
+# ...same pattern for baseline.js / workload.js / cursor-walk.js / auth.js / rate-limit.js
+```

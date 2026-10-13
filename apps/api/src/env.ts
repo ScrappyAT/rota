@@ -24,6 +24,12 @@ const envSchema = z
     BILLING_CURRENCY: z.string().default('NGN'),
     BILLING_PERIOD_DAYS: z.coerce.number().int().positive().default(30),
     SUBSCRIPTION_GRACE_DAYS: z.coerce.number().int().nonnegative().default(14),
+    // Request-limiter budgets, all expressed as max requests per 15 minutes
+    // per IP. Only raise these on dedicated load-test instances; production
+    // keeps the conservative defaults (see AGENTS.md security rules).
+    AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(100),
+    TEAMS_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
+    INVITATIONS_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
     // Comma-separated allow-list of browser origins.
     // In development, defaults to allowing Expo web development (http://localhost:8081).
     // Production requires an explicit allow-list. Supports CORS_ORIGIN, CORS_ORIGINS, ALLOWED_ORIGINS.

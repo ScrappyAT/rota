@@ -1,8 +1,9 @@
 // Primary workload test — realistic read-heavy usage against a seeded team.
 //
 // Exercises exactly what phase-3 lists and the mobile app do:
-//   - GET /teams/:teamId/shifts (cursor paginated list)
-//   - GET /teams/:teamId/activity (cursor paginated feed)
+//   - GET /teams/:teamId/shifts (cursor paginated list, plain and filtered)
+//   - GET /teams/:teamId/swaps (cursor paginated swap requests)
+//   - GET /teams/:teamId/activity (cursor paginated feed, plain and type-filtered)
 //   - occasional GET /teams/:teamId/members
 //
 // Phase profile (configurable via env):
@@ -47,11 +48,13 @@ export const options = {
 
 // Weighted endpoint mix, favoring the two lists the app loads most.
 const ENDPOINTS = (teamId) => [
-  { path: `/teams/${teamId}/shifts?limit=20`, weight: 45 },
-  { path: `/teams/${teamId}/activity?limit=20`, weight: 35 },
+  { path: `/teams/${teamId}/shifts?limit=20`, weight: 40 },
+  { path: `/teams/${teamId}/activity?limit=20`, weight: 30 },
+  { path: `/teams/${teamId}/swaps?limit=20`, weight: 10 },
+  { path: `/teams/${teamId}/activity?type=SHIFT_ASSIGNED&limit=20`, weight: 4 },
   { path: `/teams/${teamId}/shifts?limit=50`, weight: 5 },
   { path: `/teams/${teamId}/shifts?status=ACTIVE&from=${new Date(Date.now() - 7 * 864e5).toISOString()}`, weight: 5 },
-  { path: `/teams/${teamId}/members`, weight: 5 },
+  { path: `/teams/${teamId}/members`, weight: 6 },
 ];
 
 const pick = (weighted) => {

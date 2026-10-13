@@ -3,6 +3,7 @@ import {
   buildExpoMessage,
   classifyExpoResponse,
   formatShiftDate,
+  maskToken,
   NotificationEvent,
 } from '../src/services/notifications';
 
@@ -17,6 +18,17 @@ const baseEvent = (overrides: Partial<NotificationEvent> = {}): NotificationEven
   ...overrides,
 });
 
+describe('maskToken', () => {
+  it('masks long push tokens to protect sensitive credentials', () => {
+    expect(maskToken('ExponentPushToken[abcdef123456]')).toBe('ExponentPu...');
+  });
+
+  it('masks empty or short tokens with ***', () => {
+    expect(maskToken('')).toBe('***');
+    expect(maskToken('short')).toBe('***');
+  });
+});
+
 describe('prefColumn', () => {
   it('maps each notification type to its preferences column', () => {
     expect(prefColumn('SHIFT_ASSIGNED')).toBe('shift_assigned');
@@ -27,7 +39,7 @@ describe('prefColumn', () => {
 });
 
 describe('buildExpoMessage', () => {
-  it('includes recipients, title, body, data and a default sound', () => {
+  it('includes recipients, title, body, data, default sound and shifts channel', () => {
     const message = buildExpoMessage(baseEvent(), ['token-1', 'token-2']);
     expect(message).toEqual({
       to: ['token-1', 'token-2'],
@@ -35,6 +47,7 @@ describe('buildExpoMessage', () => {
       body: 'You have a shift on Mon.',
       data: { teamId: baseEvent().teamId, event: 'shift_assigned' },
       sound: 'default',
+      channelId: 'shifts',
     });
   });
 

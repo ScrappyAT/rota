@@ -539,14 +539,40 @@ router.post('/:shiftId/swaps', async (req: AuthRequest, res, next) => {
       });
 
       await client.query('COMMIT');
-      if (swap.offeredTo) {
-        const requester = await pool.query(
-          'SELECT first_name, last_name FROM users WHERE id = $1',
-          [req.user!.id]
-        );
-        const requesterName = requester.rows[0]
-          ? `${requester.rows[0].first_name} ${requester.rows[0].last_name}`
-          : 'A teammate';
+
+      const requester = await pool.query(
+        'SELECT first_name, last_name FROM users WHERE id = $1',
+        [req.user!.id]
+      );
+      const requesterName = requester.rows[0]
+        ? `${requester.rows[0].first_name} ${requester.rows[0].last_name}`.trim()
+        : 'A teammate';
+
+      // 1. Notify team OWNERS and MANAGERS that a shift swap has been requested
+      const admins = await pool.query(
+        `SELECT user_id FROM team_memberships
+         WHERE team_id = $1 AND role IN ('OWNER', 'MANAGER') AND user_id != $2`,
+        [teamId, req.user!.id]
+      );
+
+      for (const admin of admins.rows) {
+        if (swap.offeredTo && admin.user_id === swap.offeredTo) {
+          // If the admin is also the offered replacement, they receive the targeted offer notification below
+          continue;
+        }
+        await notify({
+          teamId,
+          userId: admin.user_id,
+          type: 'SWAP_REQUESTED',
+          title: 'Shift swap request',
+          body: `${requesterName} requested a shift swap for "${shift.title}" on ${formatShiftDate(shift.startsAt)}.`,
+          data: { teamId, shiftId, swapId: swap.id, event: 'swap_requested' },
+          eventKey: `swap_requested:${swap.id}:admin:${admin.user_id}`,
+        });
+      }
+
+      // 2. If a specific teammate was offered the shift, notify them as well
+      if (swap.offeredTo && swap.offeredTo !== req.user!.id) {
         await notify({
           teamId,
           userId: swap.offeredTo,
