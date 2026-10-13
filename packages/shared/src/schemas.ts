@@ -58,6 +58,20 @@ export const InvitationSchema = z.object({
   acceptedAt: z.string().datetime().or(z.date()).nullable().optional(),
 });
 
+export const CreateInvitationResponseSchema = z.object({
+  code: z.string(),
+  token: z.string(),
+  expiresAt: z.string().datetime().or(z.date()),
+});
+
+export const AcceptInvitationSchema = z.object({
+  code: z.string().min(1),
+});
+
+export type CreateInvitationResponse = z.infer<typeof CreateInvitationResponseSchema>;
+export type AcceptInvitationRequest = z.infer<typeof AcceptInvitationSchema>;
+
+
 const isoDate = () => z.string().datetime().or(z.date());
 
 export const ShiftSchema = z.object({
