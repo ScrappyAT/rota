@@ -42,7 +42,8 @@
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
     "test": "echo \"No tests in mobile yet\" && exit 0",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "eas-build-post-install": "npm run build -w @rota/shared"
   },
   "private": true
 }
