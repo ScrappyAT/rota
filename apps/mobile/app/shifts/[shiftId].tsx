@@ -7,7 +7,7 @@ import { fetchMembers, Member } from '../../src/api/members';
 import { useTeam } from '../../src/context/TeamContext';
 import { useAuth } from '../../src/context/AuthContext';
 import { useNetwork } from '../../src/context/NetworkContext';
-import { saveCachedShiftDetail, getCachedShiftDetail, saveCachedMembers, getCachedMembers } from '../../src/storage/shiftCache';
+import { saveCachedShiftDetail, getCachedShiftDetail, removeCachedShiftDetail, saveCachedMembers, getCachedMembers } from '../../src/storage/shiftCache';
 import { ErrorState } from '../../src/components/ErrorState';
 import { OfflineBanner } from '../../src/components/OfflineBanner';
 import { formatRange } from '../../src/utils/dates';
@@ -33,6 +33,7 @@ export default function ShiftDetailScreen() {
 
   const [cachedShift, setCachedShift] = useState<Shift | null>(null);
   const [cachedMembers, setCachedMembers] = useState<Member[] | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Load persistent cache for this shift
   useEffect(() => {
@@ -134,7 +135,8 @@ export default function ShiftDetailScreen() {
   const cancelShift = useMutation({
     mutationFn: () => {
       if (guardOffline('update shift')) throw new Error('Offline');
-      return updateShift(teamId, shiftId, { status: 'CANCELLED' });
+      const nextStatus = shift?.status === 'ACTIVE' ? 'CANCELLED' : 'ACTIVE';
+      return updateShift(teamId, shiftId, { status: nextStatus });
     },
     onSuccess: invalidateAll,
     onError: (e) => {
@@ -143,13 +145,34 @@ export default function ShiftDetailScreen() {
   });
 
   const removeShift = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       if (guardOffline('delete shift')) throw new Error('Offline');
+      setIsDeleting(true);
       return deleteShift(teamId, shiftId);
     },
-    onSuccess: () => router.back(),
+    onSuccess: async () => {
+      // 1. Immediately remove this shift query from the cache so it will not refetch
+      queryClient.removeQueries({ queryKey: ['shift', teamId, shiftId] });
+      // 2. Invalidate lists so they refresh
+      queryClient.invalidateQueries({ queryKey: ['shifts', teamId] });
+      queryClient.invalidateQueries({ queryKey: ['activity', teamId] });
+      queryClient.invalidateQueries({ queryKey: ['swaps', teamId] });
+      // 3. Purge from persistent offline cache
+      if (user?.id) {
+        removeCachedShiftDetail(user.id, teamId, shiftId).catch(() => {});
+      }
+      // 4. Safely navigate away
+      if (router.canGoBack()) {
+        router.back();
+      } else {
+        router.replace('/');
+      }
+    },
     onError: (e) => {
-      if ((e as Error).message !== 'Offline') Alert.alert('Error', (e as Error).message);
+      setIsDeleting(false);
+      if ((e as Error).message !== 'Offline') {
+        Alert.alert('Error', (e as Error).message || 'Failed to delete shift');
+      }
     },
   });
 
@@ -175,6 +198,10 @@ export default function ShiftDetailScreen() {
     setShowPicker(false);
     setSwapMode(false);
   }, [shiftId]);
+
+  if (isDeleting) {
+    return <Screen><Text style={typography.body}>Deleting shift...</Text></Screen>;
+  }
 
   if (shiftQuery.isPending && !shift) {
     return <Screen><Text style={typography.body}>Loading shift...</Text></Screen>;
@@ -280,7 +307,12 @@ export default function ShiftDetailScreen() {
                   disabled={isOffline}
                   onPress={() => cancelShift.mutate()}
                 />
-                <Button title="Delete" variant="danger" disabled={isOffline} onPress={() => removeShift.mutate()} />
+                <Button
+                  title={removeShift.isPending || isDeleting ? 'Deleting...' : 'Delete'}
+                  variant="danger"
+                  disabled={isOffline || removeShift.isPending || isDeleting}
+                  onPress={() => removeShift.mutate()}
+                />
               </View>
 
               {showPicker && (

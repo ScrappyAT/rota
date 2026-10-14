@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import { dataOrThrow, toQuery } from './ensure';
+import { dataOrThrow, ensureSuccess, toQuery } from './ensure';
 import { PaginatedResponse } from '@rota/shared';
 
 export interface SwapRequest {
@@ -40,7 +40,7 @@ export const fetchSwaps = async (teamId: string, options: ListOptions = {}): Pro
 
 export const approveSwap = async (teamId: string, swapId: string): Promise<void> => {
   const res = await apiClient.request(`/teams/${teamId}/swaps/${swapId}/approve`, { method: 'POST' });
-  dataOrThrow(res);
+  ensureSuccess(res);
 };
 
 export const rejectSwap = async (teamId: string, swapId: string, reason?: string): Promise<void> => {
@@ -48,10 +48,10 @@ export const rejectSwap = async (teamId: string, swapId: string, reason?: string
     method: 'POST',
     body: JSON.stringify({ reason }),
   });
-  dataOrThrow(res);
+  ensureSuccess(res);
 };
 
 export const cancelSwap = async (teamId: string, swapId: string): Promise<void> => {
   const res = await apiClient.request(`/teams/${teamId}/swaps/${swapId}/cancel`, { method: 'POST' });
-  dataOrThrow(res);
+  ensureSuccess(res);
 };

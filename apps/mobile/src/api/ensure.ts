@@ -12,10 +12,17 @@ export class ApiError extends Error {
 
 /** Throw on failure so React Query can capture the error state. */
 export function dataOrThrow<T>(res: ApiResponse<T>): T {
-  if (!res.success || res.data === undefined) {
+  if (!res.success) {
     throw new ApiError(res.error?.code ?? 'UNKNOWN_ERROR', res.error?.message ?? 'Request failed');
   }
-  return res.data;
+  return res.data as T;
+}
+
+/** Ensure request succeeded without requiring a data payload (for void mutations like delete, approve, reject). */
+export function ensureSuccess(res: ApiResponse<unknown>): void {
+  if (!res.success) {
+    throw new ApiError(res.error?.code ?? 'UNKNOWN_ERROR', res.error?.message ?? 'Request failed');
+  }
 }
 
 const toQuery = (params: Record<string, string | number | undefined>) => {

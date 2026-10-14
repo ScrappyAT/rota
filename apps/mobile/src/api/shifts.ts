@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import { dataOrThrow, toQuery } from './ensure';
+import { dataOrThrow, ensureSuccess, toQuery } from './ensure';
 import { PaginatedResponse } from '@rota/shared';
 
 export interface Shift {
@@ -74,7 +74,7 @@ export const updateShift = async (
 
 export const deleteShift = async (teamId: string, shiftId: string): Promise<void> => {
   const res = await apiClient.request(`/teams/${teamId}/shifts/${shiftId}`, { method: 'DELETE' });
-  dataOrThrow(res);
+  ensureSuccess(res);
 };
 
 export const assignUsers = async (teamId: string, shiftId: string, userIds: string[]): Promise<Assignment[]> => {
@@ -89,7 +89,7 @@ export const unassignUser = async (teamId: string, shiftId: string, userId: stri
   const res = await apiClient.request(`/teams/${teamId}/shifts/${shiftId}/assignments/${userId}`, {
     method: 'DELETE',
   });
-  dataOrThrow(res);
+  ensureSuccess(res);
 };
 
 export const requestSwap = async (

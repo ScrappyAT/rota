@@ -145,6 +145,29 @@ export async function getCachedShiftDetail(
 }
 
 /**
+ * Remove a cached individual shift (e.g. after deletion).
+ * Also prunes it from the cached shifts list so it does not reappear offline.
+ */
+export async function removeCachedShiftDetail(
+  userId: string,
+  teamId: string,
+  shiftId: string
+): Promise<void> {
+  if (!userId || !teamId || !shiftId) return;
+
+  const key = makeShiftDetailKey(userId, teamId, shiftId);
+  await AsyncStorage.removeItem(key);
+
+  const cachedList = await getCachedShifts(userId, teamId);
+  if (cachedList && cachedList.items) {
+    const filtered = cachedList.items.filter((s) => s.id !== shiftId);
+    if (filtered.length !== cachedList.items.length) {
+      await saveCachedShifts(userId, teamId, filtered, cachedList.nextCursor);
+    }
+  }
+}
+
+/**
  * Save team members for assignment details offline.
  */
 export async function saveCachedMembers(

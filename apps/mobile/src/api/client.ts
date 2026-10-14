@@ -99,9 +99,43 @@ class ApiClient {
         });
       }
 
-      const data = await response.json();
       this.notifyNetwork(true);
-      return data as ApiResponse<T>;
+
+      // Handle 204 No Content and 205 Reset Content responses (no body)
+      if (response.status === 204 || response.status === 205) {
+        return { success: true } as ApiResponse<T>;
+      }
+
+      const text = await response.text();
+      if (!text || text.trim() === '') {
+        return {
+          success: response.ok,
+          ...(response.ok
+            ? {}
+            : {
+                error: {
+                  code: `HTTP_${response.status}`,
+                  message: `Request failed with status ${response.status}`,
+                },
+              }),
+        } as ApiResponse<T>;
+      }
+
+      try {
+        const data = JSON.parse(text);
+        return data as ApiResponse<T>;
+      } catch {
+        if (!response.ok) {
+          return {
+            success: false,
+            error: {
+              code: `HTTP_${response.status}`,
+              message: `Request failed with status ${response.status}`,
+            },
+          };
+        }
+        return { success: true } as ApiResponse<T>;
+      }
     } catch (error) {
       console.error(`API Error on ${endpoint}:`, error);
       this.notifyNetwork(false);

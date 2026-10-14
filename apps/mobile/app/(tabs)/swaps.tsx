@@ -54,8 +54,12 @@ export default function SwapsScreen() {
     retry: (failureCount) => (isOffline ? false : failureCount < 1),
   });
 
-  const invalidateAll = () =>
+  const invalidateAll = () => {
     queryClient.invalidateQueries({ queryKey: ['swaps', teamId] });
+    queryClient.invalidateQueries({ queryKey: ['shifts', teamId] });
+    queryClient.invalidateQueries({ queryKey: ['shift', teamId] });
+    queryClient.invalidateQueries({ queryKey: ['activity', teamId] });
+  };
 
   const guardOffline = (action: string) => {
     if (isOffline) {
@@ -123,17 +127,29 @@ export default function SwapsScreen() {
           <View style={styles.actions}>
             {isManagerOrOwner && (
               <>
-                <Pressable style={[styles.button, styles.approve]} onPress={() => approve.mutate(item.id)}>
-                  <Text style={styles.buttonText}>Approve</Text>
+                <Pressable
+                  style={[styles.button, styles.approve, (approve.isPending || reject.isPending) && { opacity: 0.6 }]}
+                  disabled={approve.isPending || reject.isPending}
+                  onPress={() => approve.mutate(item.id)}
+                >
+                  <Text style={styles.buttonText}>{approve.isPending ? 'Approving...' : 'Approve'}</Text>
                 </Pressable>
-                <Pressable style={[styles.button, styles.reject]} onPress={() => reject.mutate(item.id)}>
-                  <Text style={styles.buttonText}>Reject</Text>
+                <Pressable
+                  style={[styles.button, styles.reject, (approve.isPending || reject.isPending) && { opacity: 0.6 }]}
+                  disabled={approve.isPending || reject.isPending}
+                  onPress={() => reject.mutate(item.id)}
+                >
+                  <Text style={styles.buttonText}>{reject.isPending ? 'Rejecting...' : 'Reject'}</Text>
                 </Pressable>
               </>
             )}
             {user && item.requestedBy === user.id && (
-              <Pressable style={[styles.button, styles.cancel]} onPress={() => cancel.mutate(item.id)}>
-                <Text style={styles.buttonText}>Cancel</Text>
+              <Pressable
+                style={[styles.button, styles.cancel, cancel.isPending && { opacity: 0.6 }]}
+                disabled={cancel.isPending}
+                onPress={() => cancel.mutate(item.id)}
+              >
+                <Text style={styles.buttonText}>{cancel.isPending ? 'Cancelling...' : 'Cancel'}</Text>
               </Pressable>
             )}
           </View>
