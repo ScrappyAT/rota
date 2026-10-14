@@ -4,6 +4,7 @@ import { AuthRequest } from '../middleware/auth';
 import { requireRole } from '../middleware/tenant';
 import {
   Roles,
+  PaymentStatus,
   CreateCheckoutSchema,
   VerifyPaymentSchema,
   UpdateSeatsSchema,
@@ -21,6 +22,7 @@ import {
   computeRenewal,
   openChange,
   reconcilePayment,
+  cleanupStalePendingPayments,
 } from '../billing/service';
 import { initializeCheckout, verifyTransaction } from '../billing/flutterwave';
 import { env } from '../env';
@@ -38,17 +40,29 @@ router.get('/', async (req: AuthRequest, res, next) => {
     try {
       await client.query('BEGIN');
       const now = new Date();
+      await cleanupStalePendingPayments(client, teamId, now);
       const { sub, plan } = await materializeSubscription(client, teamId, now);
       const usage = await getSeatUsage(client, teamId);
 
+      const unsubmittedCutoff = new Date(now.getTime() - 60 * 60 * 1000);
       const pending = await client.query(
         `SELECT id, team_id as "teamId", change_id as "changeId", tx_ref as "txRef",
                 flw_transaction_id as "flwTransactionId", amount_minor as "amountMinor",
                 currency, status, created_at as "createdAt"
-         FROM payment_transactions
-         WHERE team_id = $1 AND status = $2
-         ORDER BY created_at DESC LIMIT 1`,
-        [teamId, 'PENDING']
+         FROM payment_transactions pt
+         WHERE pt.team_id = $1 AND pt.status = $2
+           AND NOT EXISTS (
+             SELECT 1 FROM payment_transactions newer
+             WHERE newer.team_id = pt.team_id
+               AND newer.status = $3
+               AND (newer.created_at > pt.created_at OR (newer.created_at = pt.created_at AND newer.id != pt.id))
+           )
+           AND NOT (
+             pt.flw_transaction_id IS NULL
+             AND pt.created_at < $4
+           )
+         ORDER BY pt.created_at DESC LIMIT 1`,
+        [teamId, PaymentStatus.PENDING, PaymentStatus.SUCCESSFUL, unsubmittedCutoff]
       );
       const failedRenewal = await client.query(
         `SELECT pt.id, pt.team_id as "teamId", pt.change_id as "changeId", pt.tx_ref as "txRef",

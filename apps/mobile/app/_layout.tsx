@@ -78,6 +78,7 @@ function RootLayoutNav() {
         <Stack.Screen name="teams/[id]" options={{ title: 'Team Details' }} />
         <Stack.Screen name="shifts/new" options={{ title: 'Create Shift' }} />
         <Stack.Screen name="shifts/[shiftId]" options={{ title: 'Shift Details' }} />
+        <Stack.Screen name="billing/redirect" options={{ headerShown: false }} />
         <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
       </Stack>
     </ThemeProvider>

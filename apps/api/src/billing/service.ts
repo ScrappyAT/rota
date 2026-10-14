@@ -580,11 +580,39 @@ export const reconcilePayment = async (
   }
 
   if (change) {
-    if (change.type === SubscriptionChangeType.RENEWAL) {
-      await applyRenewal(client, change, now);
-    } else {
-      await applyChange(client, change);
+    // Check if a newer subscription change was already paid and applied to team_subscriptions:
+    const newerApplied = await client.query(
+      `SELECT id FROM subscription_changes
+       WHERE team_id = $1
+         AND status = $2
+         AND (created_at > $3 OR (created_at = $3 AND id != $4))
+       UNION
+       SELECT id FROM payment_transactions
+       WHERE team_id = $1
+         AND status = $5
+         AND (created_at > $6 OR (created_at = $6 AND id != $7))
+       LIMIT 1`,
+      [
+        teamId,
+        SubscriptionChangeStatus.PAID,
+        change.createdAt,
+        change.id,
+        PaymentStatus.SUCCESSFUL,
+        payment.createdAt,
+        payment.id,
+      ]
+    );
+
+    const isSuperseded = newerApplied.rows.length > 0;
+
+    if (!isSuperseded) {
+      if (change.type === SubscriptionChangeType.RENEWAL) {
+        await applyRenewal(client, change, now);
+      } else {
+        await applyChange(client, change);
+      }
     }
+
     await client.query('UPDATE subscription_changes SET status = $1 WHERE id = $2', [
       SubscriptionChangeStatus.PAID,
       change.id,
@@ -602,23 +630,56 @@ export const reconcilePayment = async (
         transactionId: gateway.transactionId,
         amountMinor: payment.amountMinor,
         currency: payment.currency,
+        ...(isSuperseded
+          ? { superseded: true, note: 'Payment settled for superseded subscription change; current active subscription was preserved.' }
+          : {}),
       },
     });
-    await addActivity(client, {
-      teamId,
-      actorId: change.actorId,
-      type: 'SUBSCRIPTION_CHANGED',
-      payload: {
-        changeType: change.type,
-        planCode: change.toPlanCode,
-        seats: change.toSeats,
-        amountMinor: change.amountMinor,
-        requiresPayment: true,
-      },
-    });
+    if (!isSuperseded) {
+      await addActivity(client, {
+        teamId,
+        actorId: change.actorId,
+        type: 'SUBSCRIPTION_CHANGED',
+        payload: {
+          changeType: change.type,
+          planCode: change.toPlanCode,
+          seats: change.toSeats,
+          amountMinor: change.amountMinor,
+          requiresPayment: true,
+        },
+      });
+    }
   }
 
+  await cleanupStalePendingPayments(client, teamId, now);
+
   return { outcome: 'SUCCESS', payment: settledPayment, change };
+};
+
+/**
+ * Safe policy for stale/superseded pending payments:
+ *
+ * In accordance with financial ledger integrity:
+ * 1. Transactions are NEVER permanently cancelled solely because flw_transaction_id is NULL
+ *    or because a newer transaction succeeded, as Flutterwave may still asynchronously settle them.
+ * 2. Obsolete pending checkouts are filtered at the read/query level (in GET /teams/:teamId/subscription)
+ *    so they never obscure active subscriptions or mislead users, while preserving their true PENDING
+ *    ledger status in payment_transactions.
+ * 3. If an older transaction later settles to SUCCESSFUL via webhook or gateway callback,
+ *    reconcilePayment() records the financial outcome and marks the invoice PAID without
+ *    reverting the newer active subscription state.
+ */
+export const cleanupStalePendingPayments = async (
+  client: PoolClient,
+  teamId: string,
+  now: Date,
+  unsubmittedExpiryMs = 60 * 60 * 1000
+): Promise<number> => {
+  void client;
+  void teamId;
+  void now;
+  void unsubmittedExpiryMs;
+  return 0;
 };
 
 export const getChangeById = async (

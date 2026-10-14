@@ -656,4 +656,152 @@ describe('Phase 4: Seat-based subscriptions and Flutterwave billing', () => {
       .set('Authorization', `Bearer ${ownerTeamB.token}`);
     expect(checkCrossTenant.status).toBe(404);
   });
+
+  it('32. abandoned checkout followed by successful checkout does not cancel older transaction and reconciles late payment without altering active subscription', async () => {
+    // Team A is on Growth plan. Setup GROWTH 5 seats to replicate Samsung test state:
+    const setupGrowth = await checkout(alice.token, teamA, { planCode: 'GROWTH', seats: 5 });
+    expect(setupGrowth.status).toBe(201);
+    const growthTxRef = setupGrowth.body.data.payment.txRef;
+    mockedVerifyTransaction.mockResolvedValueOnce({
+      transactionId: '80001',
+      txRef: growthTxRef,
+      amountMajor: Math.round(setupGrowth.body.data.payment.amountMinor / 100),
+      currency: 'NGN',
+      status: 'successful',
+    });
+    const verifyGrowth = await verify(alice.token, teamA, growthTxRef, '80001');
+    expect(verifyGrowth.status).toBe(200);
+
+    // Verify team is now GROWTH, 5 seats
+    const currentSub = await request(app).get(`/teams/${teamA}/subscription`).set('Authorization', `Bearer ${alice.token}`);
+    expect(currentSub.body.data.subscription.planCode).toBe('GROWTH');
+    expect(currentSub.body.data.subscription.seats).toBe(5);
+
+    // 1. Attempt Scale checkout for 100 seats (high-value attempt, e.g. ~₦323,833.33)
+    const scale100 = await checkout(alice.token, teamA, { planCode: 'SCALE', seats: 100 });
+    expect(scale100.status).toBe(201);
+    const scale100TxRef = scale100.body.data.payment.txRef;
+    expect(scale100.body.data.payment.amountMinor).toBeGreaterThan(30000000);
+
+    // At this point, pendingPayment reflects this high-value attempt:
+    const subWithPending = await request(app).get(`/teams/${teamA}/subscription`).set('Authorization', `Bearer ${alice.token}`);
+    expect(subWithPending.body.data.pendingPayment).toMatchObject({
+      txRef: scale100TxRef,
+      status: 'PENDING',
+    });
+
+    // 2. User abandons the 100-seat checkout, and instead checks out Scale for 5 seats:
+    const scale5 = await checkout(alice.token, teamA, { planCode: 'SCALE', seats: 5 });
+    expect(scale5.status).toBe(201);
+    const scale5TxRef = scale5.body.data.payment.txRef;
+
+    // 3. Scale 5 seats succeeds:
+    mockedVerifyTransaction.mockResolvedValueOnce({
+      transactionId: '80002',
+      txRef: scale5TxRef,
+      amountMajor: Math.round(scale5.body.data.payment.amountMinor / 100),
+      currency: 'NGN',
+      status: 'successful',
+    });
+    const verifyScale5 = await verify(alice.token, teamA, scale5TxRef, '80002');
+    expect(verifyScale5.status).toBe(200);
+    expect(verifyScale5.body.data.outcome).toBe('SUCCESS');
+
+    // 4. Verify subscription screen state:
+    // Team subscription is now SCALE, 5 seats
+    const finalSub = await request(app).get(`/teams/${teamA}/subscription`).set('Authorization', `Bearer ${alice.token}`);
+    expect(finalSub.body.data.subscription.planCode).toBe('SCALE');
+    expect(finalSub.body.data.subscription.seats).toBe(5);
+    expect(finalSub.body.data.subscription.status).toBe('ACTIVE');
+
+    // The abandoned 100-seat pendingPayment is NOT shown on the subscription screen:
+    expect(finalSub.body.data.pendingPayment).toBeNull();
+
+    // In database, the 100-seat transaction was NOT falsely cancelled; it remains PENDING in audit ledger:
+    const abandonedTx = await pool.query('SELECT status FROM payment_transactions WHERE tx_ref = $1', [scale100TxRef]);
+    expect(abandonedTx.rows[0].status).toBe('PENDING');
+
+    // 5. Late success: customer's 100-seat payment actually settles at Flutterwave:
+    const scale100AmountMajor = Math.round(scale100.body.data.payment.amountMinor / 100);
+    const lateWebhook = await callWebhook({
+      event: 'charge.completed',
+      data: {
+        id: 80003,
+        tx_ref: scale100TxRef,
+        amount: scale100AmountMajor,
+        currency: 'NGN',
+        status: 'successful',
+      },
+    });
+    expect(lateWebhook.status).toBe(200);
+    expect(lateWebhook.body.data).toMatchObject({ processed: true, outcome: 'SUCCESS' });
+
+    // Financial outcome is fully recorded:
+    const settledTx = await pool.query('SELECT status, flw_transaction_id FROM payment_transactions WHERE tx_ref = $1', [scale100TxRef]);
+    expect(settledTx.rows[0].status).toBe('SUCCESSFUL');
+    expect(settledTx.rows[0].flw_transaction_id).toBe('80003');
+
+    const settledInvoice = await pool.query('SELECT status, paid_at FROM billing_invoices WHERE change_id = $1', [scale100.body.data.change.id]);
+    expect(settledInvoice.rows[0].status).toBe('PAID');
+    expect(settledInvoice.rows[0].paid_at).not.toBeNull();
+
+    // But active subscription state is PRESERVED (NOT reverted to 100 seats):
+    const subAfterLateSettlement = await request(app).get(`/teams/${teamA}/subscription`).set('Authorization', `Bearer ${alice.token}`);
+    expect(subAfterLateSettlement.body.data.subscription.planCode).toBe('SCALE');
+    expect(subAfterLateSettlement.body.data.subscription.seats).toBe(5);
+  });
+
+  it('33. unresolved transaction with no gateway transaction ID is suppressed from subscription screen but remains PENDING in ledger', async () => {
+    const res = await checkout(alice.token, teamA, { planCode: 'SCALE', seats: 6 });
+    expect(res.status).toBe(201);
+    const txRef = res.body.data.payment.txRef;
+
+    // Simulate an unsubmitted checkout past 1 hour:
+    await pool.query(
+      `UPDATE payment_transactions
+       SET created_at = NOW() - INTERVAL '2 hours'
+       WHERE tx_ref = $1`,
+      [txRef]
+    );
+
+    // Suppressed from active subscription screen:
+    const subRes = await request(app).get(`/teams/${teamA}/subscription`).set('Authorization', `Bearer ${alice.token}`);
+    expect(subRes.status).toBe(200);
+    expect(subRes.body.data.pendingPayment).toBeNull();
+
+    // Database ledger is NOT falsified: remains PENDING with flw_transaction_id NULL:
+    const dbTx = await pool.query('SELECT status, flw_transaction_id FROM payment_transactions WHERE tx_ref = $1', [txRef]);
+    expect(dbTx.rows[0].status).toBe('PENDING');
+    expect(dbTx.rows[0].flw_transaction_id).toBeNull();
+
+    // Direct endpoint retrieves accurate audit status:
+    const checkDirect = await request(app)
+      .get(`/teams/${teamA}/subscription/payments/${txRef}`)
+      .set('Authorization', `Bearer ${alice.token}`);
+    expect(checkDirect.status).toBe(200);
+    expect(checkDirect.body.data.status).toBe('PENDING');
+  });
+
+  it('34. pending checkout with flw_transaction_id is not expired without gateway verification', async () => {
+    const res = await checkout(ownerTeamB.token, teamB, { planCode: 'GROWTH', seats: 4 });
+    expect(res.status).toBe(201);
+    const txRef = res.body.data.payment.txRef;
+
+    // Set a gateway transaction ID and backdate:
+    await pool.query(
+      `UPDATE payment_transactions
+       SET flw_transaction_id = 'flw-sub-12345', created_at = NOW() - INTERVAL '2 hours'
+       WHERE tx_ref = $1`,
+      [txRef]
+    );
+
+    // Should NOT be silently suppressed because it has a gateway transaction ID awaiting settlement:
+    const subRes = await request(app).get(`/teams/${teamB}/subscription`).set('Authorization', `Bearer ${ownerTeamB.token}`);
+    expect(subRes.status).toBe(200);
+    expect(subRes.body.data.pendingPayment).not.toBeNull();
+    expect(subRes.body.data.pendingPayment.txRef).toBe(txRef);
+
+    const dbTx = await pool.query('SELECT status FROM payment_transactions WHERE tx_ref = $1', [txRef]);
+    expect(dbTx.rows[0].status).toBe('PENDING');
+  });
 });

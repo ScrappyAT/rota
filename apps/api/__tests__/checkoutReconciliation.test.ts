@@ -292,4 +292,38 @@ describe('Checkout Result Reconciliation & Dismissal Resilience', () => {
     expect(outcome).toBe('settled');
     expect(verifier.fetchPaymentStatus).toHaveBeenCalledWith(teamId, 'rota-sub-upgrade-987');
   });
+
+  it('11. transaction-specific verification: redirect for an unconfirmed transaction returns failed or pending, NEVER settled', async () => {
+    const verifier: CheckoutVerifier = {
+      verifyPayment: jest.fn().mockResolvedValue({ outcome: 'FAILED' }),
+      fetchPaymentStatus: jest.fn().mockResolvedValue({ status: 'FAILED' }),
+    };
+
+    const outcome = await reconcileCheckoutSession(
+      teamId,
+      {
+        type: 'success',
+        url: 'rota://billing/redirect?status=successful&tx_ref=rota-sub-upgrade-987&transaction_id=123456',
+      },
+      expectedTxRef,
+      verifier
+    );
+
+    expect(outcome).toBe('failed');
+    expect(outcome).not.toBe('settled');
+  });
+
+  it('12. parseCheckoutReturn parses native Android deep links accurately', () => {
+    const nativeAndroidUrl = 'rota://billing/redirect?status=successful&tx_ref=rota-99c4d310-440a-48aa-b523-d890e2b64c27&transaction_id=892341';
+    const parsed = parseCheckoutReturn(nativeAndroidUrl);
+    expect(parsed.status).toBe('successful');
+    expect(parsed.txRef).toBe('rota-99c4d310-440a-48aa-b523-d890e2b64c27');
+    expect(parsed.transactionId).toBe('892341');
+
+    const cancelledUrl = 'rota://billing/redirect?status=cancelled&tx_ref=rota-cancelled-123';
+    const parsedCancelled = parseCheckoutReturn(cancelledUrl);
+    expect(parsedCancelled.status).toBe('cancelled');
+    expect(parsedCancelled.txRef).toBe('rota-cancelled-123');
+    expect(parsedCancelled.transactionId).toBeUndefined();
+  });
 });
