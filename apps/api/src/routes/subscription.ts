@@ -117,15 +117,33 @@ router.get('/plans', async (req: AuthRequest, res, next) => {
   }
 });
 
-const redirectUrlFor = (req: AuthRequest): string =>
-  `${req.protocol}://${req.get('host')}/billing/redirect`;
+const ALLOWED_REDIRECT_PREFIXES = ['rota://', 'exp://'];
+
+export const isAllowedReturnUrl = (url: string): boolean => {
+  if (ALLOWED_REDIRECT_PREFIXES.some((prefix) => url.startsWith(prefix))) {
+    return true;
+  }
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(url)) {
+    return true;
+  }
+  return false;
+};
+
+const redirectUrlFor = (req: AuthRequest, returnUrl?: string): string => {
+  const base = `${req.protocol}://${req.get('host')}/billing/redirect`;
+  if (returnUrl && isAllowedReturnUrl(returnUrl)) {
+    return `${base}?return_url=${encodeURIComponent(returnUrl)}`;
+  }
+  return base;
+};
 
 const sendChangeResult = async (
   req: AuthRequest,
   res: Response,
   teamId: string,
   actorId: string,
-  computed: ReturnType<typeof computeChange>
+  computed: ReturnType<typeof computeChange>,
+  returnUrl?: string
 ) => {
   const client = await pool.connect();
   let checkoutUrl: string | null = null;
@@ -140,7 +158,7 @@ const sendChangeResult = async (
         txRef: payment.txRef,
         amountMinor: payment.amountMinor,
         currency: payment.currency,
-        redirectUrl: redirectUrlFor(req),
+        redirectUrl: redirectUrlFor(req, returnUrl),
         customer: { email: req.user!.email },
       });
       checkoutUrl = init.link;
@@ -194,7 +212,7 @@ router.post('/checkout', async (req: AuthRequest, res, next) => {
       const targetPlan = await getPlan(client, data.planCode);
       const computed = computeChange(sub, plan, targetPlan, targetSeats, now);
       await client.query('COMMIT');
-      await sendChangeResult(req, res, teamId, req.user!.id, computed);
+      await sendChangeResult(req, res, teamId, req.user!.id, computed, data.returnUrl);
     } catch (e) {
       await client.query('ROLLBACK');
       throw e;
@@ -227,7 +245,7 @@ router.post('/seats', async (req: AuthRequest, res, next) => {
       }
       const computed = computeChange(sub, plan, plan, data.seats, now);
       await client.query('COMMIT');
-      await sendChangeResult(req, res, teamId, req.user!.id, computed);
+      await sendChangeResult(req, res, teamId, req.user!.id, computed, data.returnUrl);
     } catch (e) {
       await client.query('ROLLBACK');
       throw e;
@@ -243,6 +261,7 @@ router.post('/seats', async (req: AuthRequest, res, next) => {
 router.post('/renew', async (req: AuthRequest, res, next) => {
   try {
     const teamId = uuidParam(req.params.teamId, 'teamId');
+    const returnUrl = typeof req.body?.returnUrl === 'string' ? req.body.returnUrl : undefined;
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -250,7 +269,7 @@ router.post('/renew', async (req: AuthRequest, res, next) => {
       const { sub, plan } = await materializeSubscription(client, teamId, now);
       const computed = computeRenewal(sub, plan);
       await client.query('COMMIT');
-      await sendChangeResult(req, res, teamId, req.user!.id, computed);
+      await sendChangeResult(req, res, teamId, req.user!.id, computed, returnUrl);
     } catch (e) {
       await client.query('ROLLBACK');
       throw e;
@@ -282,6 +301,34 @@ router.post('/verify', async (req: AuthRequest, res, next) => {
     } finally {
       client.release();
     }
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Check status of a specific payment transaction by txRef
+router.get('/payments/:txRef', async (req: AuthRequest, res, next) => {
+  try {
+    const teamId = uuidParam(req.params.teamId, 'teamId');
+    const txRef = String(req.params.txRef || '').trim();
+    if (!txRef) {
+      throw new HttpError(400, 'INVALID_TX_REF', 'Transaction reference is required');
+    }
+
+    const { rows } = await pool.query(
+      `SELECT id, team_id as "teamId", change_id as "changeId", tx_ref as "txRef",
+              flw_transaction_id as "flwTransactionId", amount_minor as "amountMinor",
+              currency, status, created_at as "createdAt", updated_at as "updatedAt"
+       FROM payment_transactions
+       WHERE team_id = $1 AND tx_ref = $2`,
+      [teamId, txRef]
+    );
+
+    if (rows.length === 0) {
+      throw new HttpError(404, 'PAYMENT_NOT_FOUND', 'Payment transaction not found');
+    }
+
+    res.json({ success: true, data: rows[0] });
   } catch (error) {
     next(error);
   }

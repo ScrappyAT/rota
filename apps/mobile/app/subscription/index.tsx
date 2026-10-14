@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { ActivityIndicator, Alert, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Stack, router } from 'expo-router';
+import * as Linking from 'expo-linking';
 import { fetchBillingSummary, renewSubscription } from '../../src/api/billing';
 import { useTeam } from '../../src/context/TeamContext';
 import { errorMessage } from '../../src/utils/errorMessage';
@@ -35,12 +36,23 @@ export default function SubscriptionScreen() {
     if (!teamId) return;
     setBusy(true);
     try {
-      const res = await renewSubscription(teamId);
+      const returnUrl = Linking.createURL('billing/redirect');
+      const res = await renewSubscription(teamId, { returnUrl });
       if (res.checkoutUrl) {
-        await openCheckout(teamId, res.checkoutUrl);
+        const outcome = await openCheckout(teamId, res.checkoutUrl, res.payment?.txRef);
+        if (outcome === 'settled') {
+          Alert.alert('Success', 'Your subscription has been renewed.');
+        } else if (outcome === 'cancelled') {
+          Alert.alert('Payment cancelled', 'Renewal checkout was cancelled.');
+        } else if (outcome === 'failed') {
+          Alert.alert('Payment failed', 'The renewal payment could not be completed.');
+        } else {
+          Alert.alert('Payment pending', 'Your payment is being verified and will update once confirmed. Pull down to refresh.');
+        }
+      } else {
+        Alert.alert('Success', 'Subscription renewed.');
       }
       query.refetch();
-      Alert.alert('Renewal', res.checkoutUrl ? 'Payment opened in the browser. It settles when complete.' : 'Subscription renewed.');
     } catch (error) {
       Alert.alert('Error', errorMessage(error));
     } finally {

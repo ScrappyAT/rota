@@ -134,7 +134,7 @@ Executed against the live local Docker Postgres (5440) and Redis (6380), both mi
 |---|---|---|
 | Typecheck | `npm run typecheck` | PASS (api, mobile, shared — 0 errors) |
 | Lint | `npm run lint` | PASS — 0 errors, pre-existing warnings tolerated |
-| Tests | `npm test` (2026-10-13) | PASS — 14 suites, **182 tests passed** |
+| Tests | `npm test` (2026-10-14) | PASS — 15 suites, **199 tests passed** |
 | Load | `k6` via Docker vs 10,000-row seed (2026-10-13) | PASS — see `docs/PERFORMANCE-REPORT.md` |
 
 Test breakdown:
@@ -145,6 +145,7 @@ Test breakdown:
 - `cacheIsolation.test.ts` — 4 tests: User/team cache key isolation, individual shift detail pre-caching, secure logout eviction, cross-tenant isolation.
 - `notifications.test.ts` — 8 tests: Pure delivery helpers, token classification, pref columns, formatting.
 - `mobilePushContract.test.ts` — 8 tests: Token privacy (masked logging), payload routing decisions, preference keys contract.
+- `checkoutReconciliation.test.ts` — 10 tests: Dismissal resilience, absence of pending payment handling, existing active subscription isolation, network timeout/inconclusive handling, confirmed success/failure, gateway redirect status handling.
 - `push.integration.test.ts` — 9 tests (live DB): Full push scenario, dedupe ledger, token pruning, preferences skipping.
 - `integration.test.ts` — 19 tests (live DB): full Phase 2 scenario, last-owner
   protection, invitation one-time use and expiry, refresh rotation and reuse
@@ -153,14 +154,16 @@ Test breakdown:
   workflow (request → approve → assignment transfer), dedupe/status guards,
   cross-team denial, cursor pagination gaplessness + mid-walk stability, 400s
   on malformed cursors/params, feed isolation, and seed idempotency.
-- `billing.test.ts` — 25 tests (pure math): proration, renewal amounts,
-  status transitions, change computation.
-- `billing.integration.test.ts` — 25 tests (live DB, gateway mocked):
+- `billing.test.ts` — 26 tests (pure math): proration, renewal amounts,
+  status transitions, change computation, and returnUrl scheme validation.
+- `billing.integration.test.ts` — 31 tests (live DB, gateway mocked):
   provisioning, RBAC 403 / cross-tenant 404, prorated upgrades and seat
   changes, downgrade immediacy, invite seat limits, failed renewal → PAST_DUE,
   grace expiry → EXPIRED gate, successful renewal, webhook settle with
-  duplicate / bad-hash / unknown-ref handling, and settlement rollback on
-  amount/currency mismatch. See `docs/PHASE-4-TEST-REPORT.md`.
+  duplicate / bad-hash / unknown-ref handling, settlement rollback on
+  amount/currency mismatch, plan camelCase schema contract, deep-link redirect
+  bridge, failed webhook reconciliation, transaction status retrieval (`GET /payments/:txRef`),
+  and replay resistance. See `docs/PHASE-4-TEST-REPORT.md`.
   `maxWorkers: 1` keeps all DB suites from racing on shared tables.
 - `large-dataset.test.ts` — 11 tests (live DB, 10,000+ activity rows):
   distribution across 5 teams / 12 types, deterministic re-seed (count +

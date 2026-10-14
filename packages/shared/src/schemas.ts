@@ -202,6 +202,10 @@ export const SubscriptionPlanSchema = z.object({
   pricePerSeatMinor: z.number().int().nonnegative(),
   maxSeats: z.number().int().nonnegative(),
   currency: z.string().min(3),
+  isFree: z.boolean().optional(),
+  price_per_seat_minor: z.number().int().nonnegative().optional(),
+  max_seats: z.number().int().nonnegative().optional(),
+  is_free: z.boolean().optional(),
 });
 
 export type SubscriptionPlan = z.infer<typeof SubscriptionPlanSchema>;
@@ -284,6 +288,7 @@ export type BillingSummary = z.infer<typeof BillingSummarySchema>;
 export const CreateCheckoutSchema = z.object({
   planCode: z.string().trim().min(1),
   seats: z.number().int().positive().optional(),
+  returnUrl: z.string().optional(),
 });
 
 export type CreateCheckoutInput = z.infer<typeof CreateCheckoutSchema>;
@@ -297,6 +302,7 @@ export type VerifyPaymentInput = z.infer<typeof VerifyPaymentSchema>;
 
 export const UpdateSeatsSchema = z.object({
   seats: z.number().int().positive(),
+  returnUrl: z.string().optional(),
 });
 
 export type UpdateSeatsInput = z.infer<typeof UpdateSeatsSchema>;

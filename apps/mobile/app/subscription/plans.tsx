@@ -12,6 +12,7 @@ import {
   View,
 } from 'react-native';
 import { Stack } from 'expo-router';
+import * as Linking from 'expo-linking';
 import { createCheckout, fetchBillingSummary, fetchPlans } from '../../src/api/billing';
 import { useTeam } from '../../src/context/TeamContext';
 import { errorMessage } from '../../src/utils/errorMessage';
@@ -46,12 +47,22 @@ export default function PlansScreen() {
     const seatsInput = Number.isNaN(seats) ? undefined : seats;
     setBusy(true);
     try {
-      const res = await createCheckout(teamId, seatsInput ? { planCode: selected, seats: seatsInput } : { planCode: selected });
+      const returnUrl = Linking.createURL('billing/redirect');
+      const res = await createCheckout(
+        teamId,
+        seatsInput ? { planCode: selected, seats: seatsInput, returnUrl } : { planCode: selected, returnUrl }
+      );
       if (res.checkoutUrl) {
-        const outcome = await openCheckout(teamId, res.checkoutUrl);
-        if (outcome === 'settled') Alert.alert('Success', 'Your plan change is complete.');
-        else if (outcome === 'cancelled') Alert.alert('Payment cancelled', 'Your plan was not changed.');
-        else Alert.alert('Payment started', 'The change applies once the payment settles.');
+        const outcome = await openCheckout(teamId, res.checkoutUrl, res.payment?.txRef);
+        if (outcome === 'settled') {
+          Alert.alert('Success', 'Your plan change is complete.');
+        } else if (outcome === 'cancelled') {
+          Alert.alert('Payment cancelled', 'You cancelled the checkout. Your plan was not changed.');
+        } else if (outcome === 'failed') {
+          Alert.alert('Payment failed', 'The payment could not be completed. Your card was not charged.');
+        } else {
+          Alert.alert('Payment pending', 'Your payment is being verified and will update once confirmed. Pull down to refresh.');
+        }
       } else {
         Alert.alert('Success', 'Plan change applied.');
       }
@@ -90,6 +101,10 @@ export default function PlansScreen() {
         {plans.data.map((plan) => {
           const isCurrent = plan.code === currentCode;
           const isSelected = plan.code === selected;
+          const pricePerSeatMinor = plan.pricePerSeatMinor ?? plan.price_per_seat_minor ?? 0;
+          const maxSeats = plan.maxSeats ?? plan.max_seats ?? 0;
+          const isFree = plan.isFree ?? plan.is_free ?? pricePerSeatMinor === 0;
+
           return (
             <TouchableOpacity
               key={plan.code}
@@ -103,11 +118,11 @@ export default function PlansScreen() {
                 {isCurrent ? <Text style={styles.tagCurrent}>Current</Text> : null}
               </View>
               <Text style={styles.row}>
-                {plan.pricePerSeatMinor === 0
+                {isFree || pricePerSeatMinor === 0
                   ? 'Free'
-                  : `${formatMoney(plan.pricePerSeatMinor)} / seat / month`}
+                  : `${formatMoney(pricePerSeatMinor)} / seat / month`}
               </Text>
-              <Text style={styles.row}>Up to {plan.maxSeats === 0 ? 'unlimited' : plan.maxSeats} seats</Text>
+              <Text style={styles.row}>Up to {maxSeats === 0 ? 'unlimited' : maxSeats} seats</Text>
             </TouchableOpacity>
           );
         })}

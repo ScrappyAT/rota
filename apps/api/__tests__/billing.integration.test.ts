@@ -508,4 +508,152 @@ describe('Phase 4: Seat-based subscriptions and Flutterwave billing', () => {
       .set('Authorization', `Bearer ${ownerTeamB.token}`);
     expect(crossTenant.status).toBe(404);
   });
+
+  it('26. plans endpoint returns camelCase fields pricePerSeatMinor, maxSeats, isFree', async () => {
+    const plans = await request(app).get(`/teams/${teamA}/subscription/plans`).set('Authorization', `Bearer ${alice.token}`);
+    expect(plans.status).toBe(200);
+    expect(plans.body.data).toHaveLength(4);
+
+    for (const plan of plans.body.data) {
+      expect(typeof plan.code).toBe('string');
+      expect(typeof plan.name).toBe('string');
+      expect(typeof plan.pricePerSeatMinor).toBe('number');
+      expect(typeof plan.maxSeats).toBe('number');
+      expect(typeof plan.currency).toBe('string');
+      expect(typeof plan.isFree).toBe('boolean');
+      expect(Number.isFinite(plan.pricePerSeatMinor)).toBe(true);
+      expect(Number.isFinite(plan.maxSeats)).toBe(true);
+      // Backward-compatible snake_case fields also present
+      expect(plan.price_per_seat_minor).toBe(plan.pricePerSeatMinor);
+      expect(plan.max_seats).toBe(plan.maxSeats);
+      expect(plan.is_free).toBe(plan.isFree);
+    }
+
+    const free = plans.body.data.find((p: any) => p.code === 'FREE');
+    expect(free.pricePerSeatMinor).toBe(0);
+    expect(free.isFree).toBe(true);
+
+    const growth = plans.body.data.find((p: any) => p.code === 'GROWTH');
+    expect(growth.pricePerSeatMinor).toBe(300000);
+    expect(growth.maxSeats).toBe(50);
+    expect(growth.isFree).toBe(false);
+  });
+
+  it('27. GET /billing/redirect bridges back to mobile app and sanitizes open redirects', async () => {
+    // Default scheme rota://
+    const resDefault = await request(app)
+      .get('/billing/redirect?status=successful&tx_ref=ref-123&transaction_id=98765');
+    expect(resDefault.status).toBe(200);
+    expect(resDefault.text).toContain('rota://billing/redirect?status=successful&tx_ref=ref-123&transaction_id=98765');
+    expect(resDefault.text).toContain('Returning to Rota...');
+
+    // Allowed custom return_url (e.g. dev localhost)
+    const resLocalhost = await request(app)
+      .get('/billing/redirect?status=successful&tx_ref=ref-123&transaction_id=98765&return_url=http://localhost:8081/billing/redirect');
+    expect(resLocalhost.status).toBe(200);
+    expect(resLocalhost.text).toContain('http://localhost:8081/billing/redirect?status=successful&tx_ref=ref-123&transaction_id=98765');
+
+    // Malicious open redirect fallback to safe rota://
+    const resMalicious = await request(app)
+      .get('/billing/redirect?status=successful&tx_ref=ref-123&transaction_id=98765&return_url=https://attacker.com/steal');
+    expect(resMalicious.status).toBe(200);
+    expect(resMalicious.text).not.toContain('attacker.com');
+    expect(resMalicious.text).toContain('rota://billing/redirect?status=successful&tx_ref=ref-123&transaction_id=98765');
+  });
+
+  it('28. checkout forwards returnUrl to Flutterwave initializeCheckout', async () => {
+    const res = await checkout(alice.token, teamA, {
+      planCode: 'GROWTH',
+      seats: 4,
+      returnUrl: 'rota://billing/redirect',
+    });
+    expect(res.status).toBe(201);
+    expect(mockedInitializeCheckout).toHaveBeenCalledWith(
+      expect.objectContaining({
+        redirectUrl: expect.stringContaining('return_url=rota%3A%2F%2Fbilling%2Fredirect'),
+      })
+    );
+  });
+
+  it('29. webhook with failed status marks payment and change as FAILED', async () => {
+    const res = await checkout(alice.token, teamA, { planCode: 'SCALE', seats: 5 });
+    expect(res.status).toBe(201);
+    const txRef = res.body.data.payment.txRef;
+    const amountMajor = Math.round(res.body.data.payment.amountMinor / 100);
+
+    const webhook = await callWebhook({
+      event: 'charge.completed',
+      data: { id: 70099, tx_ref: txRef, amount: amountMajor, currency: 'NGN', status: 'failed' },
+    });
+    expect(webhook.status).toBe(200);
+    expect(webhook.body.data).toMatchObject({ processed: true, outcome: 'FAILED' });
+
+    const db = await pool.query('SELECT status FROM payment_transactions WHERE tx_ref = $1', [txRef]);
+    expect(db.rows[0].status).toBe('FAILED');
+
+    const changeDb = await pool.query('SELECT status FROM subscription_changes WHERE id = $1', [res.body.data.change.id]);
+    expect(changeDb.rows[0].status).toBe('FAILED');
+  });
+
+  it('30. out-of-order webhook cannot overwrite a verified SUCCESSFUL payment', async () => {
+    const res = await checkout(alice.token, teamA, { planCode: 'GROWTH', seats: 3 });
+    expect(res.status).toBe(201);
+    const txRef = res.body.data.payment.txRef;
+    const amountMajor = Math.round(res.body.data.payment.amountMinor / 100);
+
+    // First, verify successfully via redirect handler
+    mockedVerifyTransaction.mockResolvedValueOnce({
+      transactionId: '90099',
+      txRef,
+      amountMajor,
+      currency: 'NGN',
+      status: 'successful',
+    });
+    const verified = await verify(alice.token, teamA, txRef, '90099');
+    expect(verified.status).toBe(200);
+    expect(verified.body.data.outcome).toBe('SUCCESS');
+
+    // Later webhook arrives with status failed or successful
+    const lateWebhook = await callWebhook({
+      event: 'charge.completed',
+      data: { id: 70100, tx_ref: txRef, amount: amountMajor, currency: 'NGN', status: 'failed' },
+    });
+    expect(lateWebhook.status).toBe(200);
+    // Since payment was already claimed and settled to SUCCESSFUL, there is no pending payment to settle
+    expect(lateWebhook.body.data).toMatchObject({ processed: false, reason: 'no-pending' });
+
+    // Payment in DB is still SUCCESSFUL
+    const db = await pool.query('SELECT status FROM payment_transactions WHERE tx_ref = $1', [txRef]);
+    expect(db.rows[0].status).toBe('SUCCESSFUL');
+  });
+
+  it('31. GET /teams/:teamId/subscription/payments/:txRef retrieves exact transaction status and isolates tenants', async () => {
+    const res = await checkout(alice.token, teamA, { planCode: 'GROWTH', seats: 4 });
+    expect(res.status).toBe(201);
+    const txRef = res.body.data.payment.txRef;
+
+    // Direct query by owner for pending payment
+    const checkPending = await request(app)
+      .get(`/teams/${teamA}/subscription/payments/${txRef}`)
+      .set('Authorization', `Bearer ${alice.token}`);
+    expect(checkPending.status).toBe(200);
+    expect(checkPending.body.data).toMatchObject({
+      txRef,
+      status: 'PENDING',
+      teamId: teamA,
+    });
+
+    // Unknown txRef returns 404
+    const check404 = await request(app)
+      .get(`/teams/${teamA}/subscription/payments/non-existent-tx-ref`)
+      .set('Authorization', `Bearer ${alice.token}`);
+    expect(check404.status).toBe(404);
+    expect(check404.body.error.code).toBe('PAYMENT_NOT_FOUND');
+
+    // Cross-tenant access denied with 404
+    const checkCrossTenant = await request(app)
+      .get(`/teams/${teamA}/subscription/payments/${txRef}`)
+      .set('Authorization', `Bearer ${ownerTeamB.token}`);
+    expect(checkCrossTenant.status).toBe(404);
+  });
 });

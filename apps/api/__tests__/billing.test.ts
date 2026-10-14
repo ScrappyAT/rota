@@ -15,6 +15,7 @@ import {
 } from '../src/billing/service';
 import { SubscriptionStatus, SubscriptionChangeType } from '@rota/shared';
 import { billingConfig } from '../src/billing/config';
+import { isAllowedReturnUrl } from '../src/routes/subscription';
 
 const freePlan: PlanRow = {
   code: 'FREE',
@@ -23,6 +24,9 @@ const freePlan: PlanRow = {
   max_seats: 100,
   currency: 'NGN',
   is_free: true,
+  pricePerSeatMinor: 0,
+  maxSeats: 100,
+  isFree: true,
 };
 
 const starterPlan: PlanRow = {
@@ -32,6 +36,9 @@ const starterPlan: PlanRow = {
   max_seats: 10,
   currency: 'NGN',
   is_free: false,
+  pricePerSeatMinor: 250000,
+  maxSeats: 10,
+  isFree: false,
 };
 
 const growthPlan: PlanRow = {
@@ -41,6 +48,9 @@ const growthPlan: PlanRow = {
   max_seats: 50,
   currency: 'NGN',
   is_free: false,
+  pricePerSeatMinor: 300000,
+  maxSeats: 50,
+  isFree: false,
 };
 
 const scalePlan: PlanRow = {
@@ -50,6 +60,9 @@ const scalePlan: PlanRow = {
   max_seats: 500,
   currency: 'NGN',
   is_free: false,
+  pricePerSeatMinor: 350000,
+  maxSeats: 500,
+  isFree: false,
 };
 
 const sub = (overrides: Partial<SubscriptionRow> = {}): SubscriptionRow => ({
@@ -290,5 +303,16 @@ describe('renewal and capacity helpers', () => {
   it('25. FREE capacity is the plan maximum, paid capacity is seats', () => {
     expect(capacityOf(sub({ plan_code: 'FREE' }), freePlan)).toBe(100);
     expect(capacityOf(sub({ plan_code: 'STARTER', seats: 9 }), starterPlan)).toBe(9);
+  });
+
+  it('26. returnUrl validation allows app schemes and localhost but rejects external domains', () => {
+    expect(isAllowedReturnUrl('rota://billing/redirect')).toBe(true);
+    expect(isAllowedReturnUrl('rota://custom/path?foo=bar')).toBe(true);
+    expect(isAllowedReturnUrl('exp://127.0.0.1:8081/--/billing/redirect')).toBe(true);
+    expect(isAllowedReturnUrl('http://localhost:8081/billing/redirect')).toBe(true);
+    expect(isAllowedReturnUrl('http://127.0.0.1:8081/billing/redirect')).toBe(true);
+    expect(isAllowedReturnUrl('https://evil.com/phishing')).toBe(false);
+    expect(isAllowedReturnUrl('javascript:alert(1)')).toBe(false);
+    expect(isAllowedReturnUrl('ftp://example.com')).toBe(false);
   });
 });

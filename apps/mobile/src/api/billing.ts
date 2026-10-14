@@ -35,7 +35,7 @@ export const fetchPlans = async (teamId: string): Promise<SubscriptionPlan[]> =>
 
 export const createCheckout = async (
   teamId: string,
-  input: { planCode: string; seats?: number }
+  input: { planCode: string; seats?: number; returnUrl?: string }
 ): Promise<ChangePaymentResult> => {
   const res = await apiClient.request<ChangePaymentResult>(`/teams/${teamId}/subscription/checkout`, {
     method: 'POST',
@@ -44,17 +44,25 @@ export const createCheckout = async (
   return dataOrThrow(res);
 };
 
-export const changeSeats = async (teamId: string, seats: number): Promise<ChangePaymentResult> => {
+export const changeSeats = async (
+  teamId: string,
+  input: number | { seats: number; returnUrl?: string }
+): Promise<ChangePaymentResult> => {
+  const body = typeof input === 'number' ? { seats: input } : input;
   const res = await apiClient.request<ChangePaymentResult>(`/teams/${teamId}/subscription/seats`, {
     method: 'POST',
-    body: JSON.stringify({ seats }),
+    body: JSON.stringify(body),
   });
   return dataOrThrow(res);
 };
 
-export const renewSubscription = async (teamId: string): Promise<ChangePaymentResult> => {
+export const renewSubscription = async (
+  teamId: string,
+  input?: { returnUrl?: string }
+): Promise<ChangePaymentResult> => {
   const res = await apiClient.request<ChangePaymentResult>(`/teams/${teamId}/subscription/renew`, {
     method: 'POST',
+    body: input ? JSON.stringify(input) : undefined,
   });
   return dataOrThrow(res);
 };
@@ -68,6 +76,16 @@ export const verifyPayment = async (
     method: 'POST',
     body: JSON.stringify({ txRef, transactionId }),
   });
+  return dataOrThrow(res);
+};
+
+export const fetchPaymentStatus = async (
+  teamId: string,
+  txRef: string
+): Promise<PaymentTransaction> => {
+  const res = await apiClient.request<PaymentTransaction>(
+    `/teams/${teamId}/subscription/payments/${encodeURIComponent(txRef)}`
+  );
   return dataOrThrow(res);
 };
 

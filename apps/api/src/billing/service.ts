@@ -26,6 +26,9 @@ export interface PlanRow {
   max_seats: number;
   currency: string;
   is_free: boolean;
+  pricePerSeatMinor: number;
+  maxSeats: number;
+  isFree: boolean;
 }
 
 export interface SubscriptionRow {
@@ -99,6 +102,9 @@ export const getPlan = async (client: PoolClient, code: string): Promise<PlanRow
     max_seats: r.max_seats,
     currency: r.currency,
     is_free: r.is_free,
+    pricePerSeatMinor: r.price_per_seat_minor,
+    maxSeats: r.max_seats,
+    isFree: r.is_free,
   };
 };
 
@@ -114,6 +120,9 @@ export const listPlans = async (client: PoolClient): Promise<PlanRow[]> => {
     max_seats: r.max_seats,
     currency: r.currency,
     is_free: r.is_free,
+    pricePerSeatMinor: r.price_per_seat_minor,
+    maxSeats: r.max_seats,
+    isFree: r.is_free,
   }));
 };
 
@@ -503,7 +512,7 @@ export const reconcilePayment = async (
   if (gateway.txRef && gateway.txRef !== payment.txRef) {
     throw new HttpError(400, 'PAYMENT_MISMATCH', 'Transaction reference does not match');
   }
-  if (gateway.currency !== billingConfig.currency) {
+  if (gateway.currency.toUpperCase().trim() !== billingConfig.currency.toUpperCase().trim()) {
     throw new HttpError(400, 'PAYMENT_MISMATCH', 'Payment currency does not match the subscription');
   }
   const expectedMajor = Math.round(payment.amountMinor / billingConfig.minorUnitsPerMajor);
@@ -517,7 +526,7 @@ export const reconcilePayment = async (
     throw new HttpError(400, 'PAYMENT_MISMATCH', 'Payment was already linked to another transaction');
   }
 
-  const state = gateway.status === 'successful' ? PaymentStatus.SUCCESSFUL : PaymentStatus.FAILED;
+  const state = gateway.status?.toLowerCase() === 'successful' ? PaymentStatus.SUCCESSFUL : PaymentStatus.FAILED;
 
   const claimRes = await client.query(
     `UPDATE payment_transactions
