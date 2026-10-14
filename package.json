@@ -21,7 +21,11 @@
     "db:stop": "docker compose -f infrastructure/docker-compose.yml down",
     "db:migrate": "npm run db:migrate -w @rota/api",
     "db:seed:activity": "npm run db:seed:activity -w @rota/api",
-    "db:seed:dataset": "npm run db:seed:dataset -w @rota/api"
+    "db:seed:dataset": "npm run db:seed:dataset -w @rota/api",
+    "db:sharding:start": "powershell -ExecutionPolicy Bypass -File scripts/start-sharding.ps1",
+    "db:sharding:stop": "powershell -ExecutionPolicy Bypass -File scripts/stop-sharding.ps1",
+    "demo:sharding": "npm run demo:sharding -w @rota/api",
+    "test:sharding": "npm run test:sharding -w @rota/api"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

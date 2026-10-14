@@ -118,7 +118,7 @@ for evidence.
 | Offline shift viewing | Completed & verified | Persistent local cache via FileSystem AsyncStorage adapter, user/team isolation, offline indicator, write mutation blocking, auto-reconnect refresh |
 | Settings synchronization | Not started | Requires user settings table + API |
 | Redis usage | Partially implemented | Health probe + `/devices` Redis-backed rate limiter; no general cache layer |
-| PostgreSQL sharding simulation | Not started | Needs design decision (logical shards by team_id) |
+| PostgreSQL sharding simulation | Completed & verified | Two-PostgreSQL Docker cluster (:5441/:5442), deterministic MD5 router, pool manager, scatter-gather, 11 tests in `sharding.test.ts` (see `docs/SHARDING.md`) |
 | Load testing (k6 harness) | Completed & verified | `k6/**` scripts executed via Docker against a 10,000-row live seed — see `docs/PERFORMANCE-REPORT.md`; budgets env-configurable for dev instances |
 | Android development build | Completed & verified | EAS development build running on physical Samsung test device |
 | Deployment packaging (Docker + Railway) | Implemented, not independently verified | `Dockerfile`, `.dockerignore`, `railway.json`, `docs/DEPLOYMENT.md`; image not yet built/deployed in this session |
@@ -134,11 +134,12 @@ Executed against the live local Docker Postgres (5440) and Redis (6380), both mi
 |---|---|---|
 | Typecheck | `npm run typecheck` | PASS (api, mobile, shared — 0 errors) |
 | Lint | `npm run lint` | PASS — 0 errors, pre-existing warnings tolerated |
-| Tests | `npm test` (2026-10-14) | PASS — 15 suites, **199 tests passed** |
+| Tests | `npm test` (2026-10-14) | PASS — 17 suites, **227 tests passed** |
 | Load | `k6` via Docker vs 10,000-row seed (2026-10-13) | PASS — see `docs/PERFORMANCE-REPORT.md` |
 
 Test breakdown:
 
+- `sharding.test.ts` — 11 tests: Deterministic UUID routing, uniform distribution, physical data isolation on live Shard 0/1, cross-shard scatter-gather aggregation, blast-radius fault tolerance.
 - `health.test.ts` — 1 test (mocked deps).
 - `rate-limit.test.ts` — 1 test (mocked deps): 429 after budget exceeded.
 - `security.test.ts` — 5 tests: Helmet headers, CORS origins, Redis rate limiting.

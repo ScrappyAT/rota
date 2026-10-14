@@ -12,7 +12,9 @@
     "db:seed:dataset": "ts-node scripts/seed-dataset.ts",
     "lint": "eslint src/**/*.ts",
     "typecheck": "tsc --noEmit",
-    "test": "jest"
+    "test": "jest",
+    "test:sharding": "jest __tests__/sharding.test.ts",
+    "demo:sharding": "ts-node scripts/demo-sharding.ts"
   },
   "dependencies": {
     "@rota/shared": "*",
