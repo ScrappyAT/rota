@@ -8,6 +8,7 @@ import { uuidParam } from '../utils';
 import { parseLimit, page, cursorPosition, parseStatus } from '../pagination';
 import { addActivity } from '../services/activity';
 import { notify } from '../services/notifications';
+import { invalidateShifts, invalidateActivity } from '../services/cache';
 
 const router = Router({ mergeParams: true });
 
@@ -198,6 +199,8 @@ router.post('/:swapId/approve', async (req: AuthRequest, res, next) => {
       });
 
       await client.query('COMMIT');
+      await invalidateShifts(teamId);
+      await invalidateActivity(teamId);
       await notify({
         teamId,
         userId: swap.requestedBy,
@@ -268,6 +271,7 @@ router.post('/:swapId/reject', async (req: AuthRequest, res, next) => {
       });
 
       await client.query('COMMIT');
+      await invalidateActivity(teamId);
       await notify({
         teamId,
         userId: swap.requestedBy,
@@ -322,6 +326,7 @@ router.post('/:swapId/cancel', async (req: AuthRequest, res, next) => {
       });
 
       await client.query('COMMIT');
+      await invalidateActivity(teamId);
       res.json({ success: true });
     } catch (e) {
       await client.query('ROLLBACK');

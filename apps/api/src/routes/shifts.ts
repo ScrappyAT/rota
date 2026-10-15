@@ -9,6 +9,7 @@ import { parseLimit, page, cursorPosition, parseStatus } from '../pagination';
 import { addActivity } from '../services/activity';
 import { notify, formatShiftDate } from '../services/notifications';
 import { assertSubscriptionActive } from '../billing/service';
+import { getCache, setCache, cacheKeys, CACHE_TTLS, invalidateShifts, invalidateActivity } from '../services/cache';
 
 const router = Router({ mergeParams: true });
 
@@ -87,6 +88,20 @@ router.get('/', async (req: AuthRequest, res, next) => {
       throw new HttpError(400, 'VALIDATION_ERROR', 'Invalid to date');
     }
 
+    const queryParams = {
+      limit,
+      cursor: req.query.cursor,
+      from: from ? from.toISOString() : undefined,
+      to: to ? to.toISOString() : undefined,
+      status,
+      assignedTo,
+    };
+    const cacheKey = cacheKeys.shifts(teamId, queryParams);
+    const cached = await getCache<any>(cacheKey);
+    if (cached) {
+      return res.json({ success: true, data: cached });
+    }
+
     const conditions: string[] = ['s.team_id = $1'];
     const params: unknown[] = [teamId];
     let n = 2;
@@ -136,6 +151,7 @@ router.get('/', async (req: AuthRequest, res, next) => {
       keyOf: (r) => ({ timestamp: r.startsAt, id: r.id }),
     });
 
+    await setCache(cacheKey, result, CACHE_TTLS.SHIFTS);
     res.json({ success: true, data: result });
   } catch (error) {
     next(error);
@@ -181,6 +197,8 @@ router.post('/', requireRole([Roles.OWNER, Roles.MANAGER]), async (req: AuthRequ
       });
 
       await client.query('COMMIT');
+      await invalidateShifts(teamId);
+      await invalidateActivity(teamId);
       if (assigneeIds.length > 0) {
         await Promise.all(
           assigneeIds.map((userId) =>
@@ -294,6 +312,8 @@ router.patch('/:shiftId', requireRole([Roles.OWNER, Roles.MANAGER]), async (req:
       });
 
       await client.query('COMMIT');
+      await invalidateShifts(teamId);
+      await invalidateActivity(teamId);
       res.json({ success: true, data: updatedRes.rows[0] });
     } catch (e) {
       await client.query('ROLLBACK');
@@ -331,6 +351,8 @@ router.delete('/:shiftId', requireRole([Roles.OWNER, Roles.MANAGER]), async (req
       });
       await client.query('DELETE FROM shifts WHERE id = $1', [shiftId]);
       await client.query('COMMIT');
+      await invalidateShifts(teamId);
+      await invalidateActivity(teamId);
       res.json({ success: true });
     } catch (e) {
       await client.query('ROLLBACK');
@@ -379,6 +401,8 @@ router.post('/:shiftId/assignments', requireRole([Roles.OWNER, Roles.MANAGER]), 
       });
 
       await client.query('COMMIT');
+      await invalidateShifts(teamId);
+      await invalidateActivity(teamId);
       // ON CONFLICT DO NOTHING + RETURNING yields only rows actually inserted,
       // so only newly assigned members are notified.
       const newlyAssignedIds = insertedRes.rows.map((row: { userId: string }) => row.userId);
@@ -455,6 +479,8 @@ router.delete('/:shiftId/assignments/:userId', async (req: AuthRequest, res, nex
       });
 
       await client.query('COMMIT');
+      await invalidateShifts(teamId);
+      await invalidateActivity(teamId);
       res.json({ success: true });
     } catch (e) {
       await client.query('ROLLBACK');
@@ -539,6 +565,7 @@ router.post('/:shiftId/swaps', async (req: AuthRequest, res, next) => {
       });
 
       await client.query('COMMIT');
+      await invalidateActivity(teamId);
 
       const requester = await pool.query(
         'SELECT first_name, last_name FROM users WHERE id = $1',

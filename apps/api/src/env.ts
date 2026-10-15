@@ -50,6 +50,12 @@ const envSchema = z
       .string()
       .url()
       .default('https://exp.host/--/api/v2/push/send'),
+    // Cache-aside toggle for benchmarking and testing (default true)
+    ENABLE_REDIS_CACHE: z
+      .string()
+      .optional()
+      .default('true')
+      .transform((val) => val !== 'false' && val !== '0'),
   })
   .superRefine((cfg, ctx) => {
     if (cfg.NODE_ENV !== 'production') return;

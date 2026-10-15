@@ -117,9 +117,9 @@ for evidence.
 | Push notifications | Completed & verified | Backend ledger + Expo push delivery, mobile registration, foreground/background handlers, deep link navigation, preference toggles, logout cleanup |
 | Offline shift viewing | Completed & verified | Persistent local cache via FileSystem AsyncStorage adapter, user/team isolation, offline indicator, write mutation blocking, auto-reconnect refresh |
 | Settings synchronization | Not started | Requires user settings table + API |
-| Redis usage | Partially implemented | Health probe + `/devices` Redis-backed rate limiter; no general cache layer |
+| Redis usage | Completed & verified | Cache-aside for team roster (300s TTL), shift calendar (120s TTL), and activity feed (60s TTL) with explicit invalidation on mutations; health probe; `/devices` rate limiting |
 | PostgreSQL sharding simulation | Completed & verified | Two-PostgreSQL Docker cluster (:5441/:5442), deterministic MD5 router, pool manager, scatter-gather, 11 tests in `sharding.test.ts` (see `docs/SHARDING.md`) |
-| Load testing (k6 harness) | Completed & verified | `k6/**` scripts executed via Docker against a 10,000-row live seed — see `docs/PERFORMANCE-REPORT.md`; budgets env-configurable for dev instances |
+| Load testing (k6 harness) | Completed & verified | `load-tests/**` executed via Docker against 10k-row seed; dedicated 200-VU activity feed benchmark before & after caching (see `load-tests/REPORT.md` and `docs/PERFORMANCE-REPORT.md`) |
 | Android development build | Completed & verified | EAS development build running on physical Samsung test device |
 | Deployment packaging (Docker + Railway) | Implemented, not independently verified | `Dockerfile`, `.dockerignore`, `railway.json`, `docs/DEPLOYMENT.md`; image not yet built/deployed in this session |
 | Demo video | Not started | Blocked on deployed host being reachable during recording |
@@ -134,11 +134,12 @@ Executed against the live local Docker Postgres (5440) and Redis (6380), both mi
 |---|---|---|
 | Typecheck | `npm run typecheck` | PASS (api, mobile, shared — 0 errors) |
 | Lint | `npm run lint` | PASS — 0 errors, pre-existing warnings tolerated |
-| Tests | `npm test` (2026-10-14) | PASS — 17 suites, **227 tests passed** |
-| Load | `k6` via Docker vs 10,000-row seed (2026-10-13) | PASS — see `docs/PERFORMANCE-REPORT.md` |
+| Tests | `npm test` (2026-10-15) | PASS — 18 suites, **236 tests passed** |
+| Load | `k6` via Docker vs 10,000-row seed (2026-10-15) | PASS — 200 VUs simultaneous activity feed benchmark (+74.9% throughput, -49.9% p50 with cache) |
 
 Test breakdown:
 
+- `cache.test.ts` — 9 tests: Cache miss/hit lifecycle, explicit invalidation on shift/member mutations, swap approvals, tenant isolation, cache bypass flag (`ENABLE_REDIS_CACHE=false`).
 - `sharding.test.ts` — 11 tests: Deterministic UUID routing, uniform distribution, physical data isolation on live Shard 0/1, cross-shard scatter-gather aggregation, blast-radius fault tolerance.
 - `health.test.ts` — 1 test (mocked deps).
 - `rate-limit.test.ts` — 1 test (mocked deps): 429 after budget exceeded.

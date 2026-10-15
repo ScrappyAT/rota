@@ -6,6 +6,7 @@ import { Roles } from '@rota/shared';
 import { HttpError } from '../http-error';
 import { uuidParam } from '../utils';
 import { parseLimit, page, cursorPosition } from '../pagination';
+import { getCache, setCache, cacheKeys, CACHE_TTLS } from '../services/cache';
 
 const router = Router({ mergeParams: true });
 
@@ -36,6 +37,17 @@ router.get('/', async (req: AuthRequest, res, next) => {
 
     if (type && !VALID_TYPES.includes(type)) {
       throw new HttpError(400, 'VALIDATION_ERROR', `type must be one of: ${VALID_TYPES.join(', ')}`);
+    }
+
+    const queryParams = {
+      limit,
+      cursor: req.query.cursor,
+      type,
+    };
+    const cacheKey = cacheKeys.activity(teamId, queryParams);
+    const cached = await getCache<any>(cacheKey);
+    if (cached) {
+      return res.json({ success: true, data: cached });
     }
 
     const conditions: string[] = ['a.team_id = $1'];
@@ -70,6 +82,7 @@ router.get('/', async (req: AuthRequest, res, next) => {
       keyOf: (r) => ({ timestamp: r.createdAt, id: r.id }),
     });
 
+    await setCache(cacheKey, result, CACHE_TTLS.ACTIVITY);
     res.json({ success: true, data: result });
   } catch (error) {
     next(error);

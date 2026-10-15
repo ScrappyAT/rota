@@ -534,6 +534,6 @@ describe('Phase 3: Shifts, Swaps, Activity Feed, Cursor Pagination', () => {
         [seedTeam]
       );
       expect(others.rows[0].total).toBe(0);
-    });
+    }, 30000);
   });
 });

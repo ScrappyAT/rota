@@ -16,6 +16,7 @@ import {
   INVITATION_EXPIRATION_MS,
   MAX_FAILED_ATTEMPTS,
 } from '../services/invitation';
+import { invalidateRoster, invalidateActivity } from '../services/cache';
 
 const router = Router();
 
@@ -224,6 +225,9 @@ router.post('/accept', acceptLimiter, async (req: AuthRequest, res, next) => {
 
       await client.query('UPDATE invitations SET accepted_at = NOW() WHERE id = $1', [invite.id]);
       await client.query('COMMIT');
+
+      await invalidateRoster(invite.team_id);
+      await invalidateActivity(invite.team_id);
 
       // Clear failed attempts on successful redemption
       await clearFailedAttempts(userId);

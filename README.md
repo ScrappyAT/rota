@@ -74,7 +74,11 @@ Rota is a mobile shift-scheduling application for small businesses such as resta
 - **Deployment**: `Dockerfile` + `railway.json` produce a self-contained API
   image (shared package built first, migrations run on boot). Runbook and env
   reference in `docs/DEPLOYMENT.md`.
-- **Load testing**: Grafana k6 suite in `k6/` (health smoke, weighted workload,
-  cursor-pagination soak, rate-limit proof) — runbook in
-  `docs/PERFORMANCE-TESTING.md`.
+- **Redis Caching**: Redis cache-aside layer for team roster (`GET /teams/:teamId/members`),
+  shift calendar reads (`GET /teams/:teamId/shifts`), and activity feed reads
+  (`GET /teams/:teamId/activity`), with explicit invalidation upon shift mutations,
+  membership changes, and swap approvals.
+- **Load Testing**: Dedicated 200-VU simultaneous activity feed benchmark and
+  k6 suite in `load-tests/`. Empirical results before and after caching are
+  documented in `load-tests/REPORT.md` and `docs/PERFORMANCE-REPORT.md`.
 - **Graduation checklist**: `docs/SUBMISSION.md`.

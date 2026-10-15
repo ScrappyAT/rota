@@ -3,6 +3,7 @@ import { pool } from '../db';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { requireRole } from '../middleware/tenant';
 import { Roles } from '@rota/shared';
+import { getCache, setCache, cacheKeys, CACHE_TTLS, invalidateRoster } from '../services/cache';
 
 import shiftsRouter from './shifts';
 import swapsRouter from './swaps';
@@ -85,10 +86,18 @@ router.get('/:teamId', requireRole([Roles.OWNER, Roles.MANAGER, Roles.STAFF]), a
 // List Members
 router.get('/:teamId/members', requireRole([Roles.OWNER, Roles.MANAGER, Roles.STAFF]), async (req: AuthRequest, res, next) => {
   try {
+    const teamId = req.params.teamId;
+    const cacheKey = cacheKeys.roster(teamId);
+    const cached = await getCache<any[]>(cacheKey);
+    if (cached) {
+      return res.json({ success: true, data: cached });
+    }
+
     const { rows } = await pool.query(
       'SELECT tm.id, tm.team_id as "teamId", tm.user_id as "userId", tm.role, u.email, u.first_name as "firstName", u.last_name as "lastName" FROM team_memberships tm JOIN users u ON tm.user_id = u.id WHERE tm.team_id = $1',
-      [req.params.teamId]
+      [teamId]
     );
+    await setCache(cacheKey, rows, CACHE_TTLS.ROSTER);
     res.json({ success: true, data: rows });
   } catch (error) {
     next(error);
@@ -123,6 +132,7 @@ router.patch('/:teamId/members/:userId/role', requireRole([Roles.OWNER]), async 
       'UPDATE team_memberships SET role = $1 WHERE team_id = $2 AND user_id = $3',
       [role, req.params.teamId, req.params.userId]
     );
+    await invalidateRoster(req.params.teamId);
     res.json({ success: true });
   } catch (error) {
     next(error);
@@ -156,6 +166,7 @@ router.delete('/:teamId/members/:userId', requireRole([Roles.OWNER, Roles.MANAGE
     }
 
     await pool.query('DELETE FROM team_memberships WHERE team_id = $1 AND user_id = $2', [req.params.teamId, req.params.userId]);
+    await invalidateRoster(req.params.teamId);
     res.json({ success: true });
   } catch (error) {
     next(error);

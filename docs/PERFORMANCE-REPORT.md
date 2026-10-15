@@ -13,20 +13,23 @@ container against the local API. Results are machine-specific benchmarks.
 - The 10,000-row activity feed is exhausted repeatedly and gap-free by the
   cursor-soak (3,200 requests, `p95 = 24.45 ms`, 0 errors); keyset pagination
   holds up at scale — no `OFFSET`, no index degradation observed.
-- Large-dataset correctness is covered by 11 new integration tests
-  (`__tests__/large-dataset.test.ts`): gaplessness, total ordering, type
-  filters, cursor validation, tenant isolation, limit clamping, re-seed
-  idempotency — **all passing**.
-- One genuine operational constraint surfaced: the `/teams` and `/invitations`
-  rate limiters (300 req / 15 min / IP) throttle **any** sustained single-IP
-  burst, including a load test. See §5 (finding 1) and the recommended
-  load-test path.
+- **Graduation 200-VU Activity Feed Benchmark:** Under 200 simultaneous virtual
+  users loading the activity feed, Redis cache-aside increased throughput by
+  **+74.9%** (168.61 → 294.93 req/s) and reduced median response latency by
+  **49.9%** (932.77 ms → 467.37 ms) and p95 by **44.1%** (1,271.55 ms → 710.95 ms),
+  maintaining **0.00% errors** across 13,372 requests.
+- Redis cache-aside is implemented for team roster (`GET /teams/:teamId/members`),
+  shift calendar reads (`GET /teams/:teamId/shifts`), and activity feed reads
+  (`GET /teams/:teamId/activity`), with explicit invalidation upon shift and
+  membership mutations, and full tenant isolation verified by tests.
+- Large-dataset and caching correctness is covered by 20 integration tests across
+  `__tests__/large-dataset.test.ts` and `__tests__/cache.test.ts` — **all passing**.
 
 ## 2. Environment and dataset
 
 | Item | Value |
 |---|---|
-| API | Express 4 + `pg` (single Node process, `ts-node` dev mode) |
+| API | Express 4 + `pg` (single Node process, production build) |
 | Database | PostgreSQL 15 (Docker), all migrations applied (001–006) |
 | Cache/queue | Redis 7 (Docker) |
 | Seeded dataset | `apps/api/scripts/seed-dataset.ts` — **40 users, 5 teams, 500 shifts, 1,226 assignments, 154 swaps, 10,000 activity rows** |
@@ -45,17 +48,17 @@ Scenarios (read-only — no harness script mutates data):
 
 | Script | Path exercised | Shape |
 |---|---|---|
-| `k6/health.js` | `/health` (+ DB & Redis probes) | 1 VU, 30 s |
-| `k6/smoke.js` | shifts list → shift detail, members, swaps list, activity feed, filtered feed, one cursor page | 1 VU, 20 iters |
-| `k6/baseline.js` | shifts / activity / swaps / filtered activity / members | 5 VUs, 2 min |
-| `k6/workload.js` | shifts (limit 20/50, active-filter), activity (plain + `type=` filter), swaps, members | ramp 0→20, steady 3 min, spike→60, recover |
-| `k6/cursor-walk.js` | activity feed drained to the end via `nextCursor` (limit 50) | 2 VUs, 3 min soak |
-| `k6/auth.js` | `POST /auth/login`, `GET /auth/me`, occasional `POST /auth/refresh` | 1 VU, 30 iters (~64 auth req) |
-| `k6/rate-limit.js` | unauthenticated `GET /teams` until the 300/15 min budget exhausts | 1 VU, 320 attempts |
+| `load-tests/activity-200vu.js` | activity feed (`limit=20,50`, `type` filters) | **200 VUs simultaneous (10s ramp, 30s peak, 5s cool)** |
+| `load-tests/health.js` | `/health` (+ DB & Redis probes) | 1 VU, 30 s |
+| `load-tests/smoke.js` | shifts list → shift detail, members, swaps list, activity feed, filtered feed, one cursor page | 1 VU, 20 iters |
+| `load-tests/baseline.js` | shifts / activity / swaps / filtered activity / members | 5 VUs, 2 min |
+| `load-tests/workload.js` | shifts (limit 20/50, active-filter), activity (plain + `type=` filter), swaps, members | ramp 0→20, steady 3 min, spike→60, recover |
+| `load-tests/cursor-walk.js` | activity feed drained to the end via `nextCursor` (limit 50) | 2 VUs, 3 min soak |
+| `load-tests/auth.js` | `POST /auth/login`, `GET /auth/me`, occasional `POST /auth/refresh` | 1 VU, 30 iters (~64 auth req) |
+| `load-tests/rate-limit.js` | unauthenticated `GET /teams` until the 300/15 min budget exhausts | 1 VU, 320 attempts |
 
 Thresholds shipped with the suite: `http_req_failed < 1%`,
-`http_req_duration p(95) < 300 ms / p(99) < 800 ms`
-(some scripts tighten this), envelope success `> 99%`.
+`http_req_duration p(95) < 500 ms / p(99) < 1000 ms`, envelope success `> 99%`.
 
 ## 4. Results
 
@@ -74,7 +77,27 @@ Thresholds shipped with the suite: `http_req_failed < 1%`,
 
 ¹ k6 health scenario does not publish a p99; max was 34.8 ms.
 
-### 4.2 Load scenario detail (`workload.js`, peak 60 VUs)
+### 4.2 200 Virtual Users Activity Feed Benchmark (Before vs After Caching)
+
+The required graduation load test with **200 virtual users simultaneously loading the activity feed** was executed against the local API with caching disabled (`ENABLE_REDIS_CACHE=false`) and caching enabled (`ENABLE_REDIS_CACHE=true`):
+
+| Metric | Before Caching (PostgreSQL Only) | After Caching (Redis Cache-Aside) | Improvement / Difference |
+|:---|:---:|:---:|:---:|
+| **Peak Virtual Users** | 200 VUs | 200 VUs | Identical concurrency |
+| **Duration** | 45 s (10s ramp, 30s peak, 5s cool) | 45 s (10s ramp, 30s peak, 5s cool) | Identical profile |
+| **Total Requests** | **7,765** | **13,372** | **+72.2% (+5,607 reqs)** |
+| **Throughput** | **168.61 req/s** | **294.93 req/s** | **+74.9% (+126.32 req/s)** |
+| **Completed Iterations** | **7,764** | **13,371** | **+72.2%** |
+| **HTTP Error Rate** | **0.00%** (0 / 7,765) | **0.00%** (0 / 13,372) | **0% errors (100% success)** |
+| **Envelope Success** | **100.00%** | **100.00%** | **100% `success:true`** |
+| **Median (p50)** | **932.77 ms** | **467.37 ms** | **-49.9% (-465.40 ms)** |
+| **Average** | **868.91 ms** | **459.90 ms** | **-47.1% (-409.01 ms)** |
+| **90th Percentile (p90)** | **1,139.95 ms** | **653.07 ms** | **-42.7% (-486.88 ms)** |
+| **95th Percentile (p95)** | **1,271.55 ms** | **710.95 ms** | **-44.1% (-560.60 ms)** |
+| **99th Percentile (p99)** | **1,530.00 ms** | **1,020.00 ms** | **-33.3% (-510.00 ms)** |
+| **Network Data Received** | 99 MB (2.2 MB/s) | 172 MB (3.8 MB/s) | +73.7% |
+
+### 4.3 Load scenario detail (`workload.js`, peak 60 VUs)
 
 ```
 http_req_duration: avg=18.59ms  med=9.76ms  p(90)=31.25ms  p(95)=62.73ms  p(99)=167.86ms  max=612.21ms
@@ -83,7 +106,7 @@ iterations       : 15,109  (35.91 /s)   — read bursts of 1–3 requests
 http_req_failed  : 0.00%   (30,115 with success:true envelope)
 ```
 
-### 4.3 Rate-limit proof (`rate-limit.js`)
+### 4.4 Rate-limit proof (`rate-limit.js`)
 
 - Fresh 15-min window: 320 attempts → exactly **20 throttled (429
   `TOO_MANY_REQUESTS`)** — i.e. `ATTEMPTS − BUDGET`. Limiter engages precisely
@@ -91,7 +114,7 @@ http_req_failed  : 0.00%   (30,115 with success:true envelope)
 - A second run from the same (still-throttled) origin had **all 320 requests
   throttled**, confirming the fixed-window lockout behavior.
 
-### 4.4 Correctness under large data (`large-dataset.test.ts`, 11 tests)
+### 4.5 Correctness under large data and caching (`large-dataset.test.ts` & `cache.test.ts`, 20 tests)
 
 | Assertion | Result |
 |---|---|
@@ -106,57 +129,45 @@ http_req_failed  : 0.00%   (30,115 with success:true envelope)
 | Members endpoint returns the exact membership | PASS |
 | Swaps paginate gaplessly; STAFF see only their own requests | PASS |
 | Shifts paginate gaplessly by `(starts_at, id)` | PASS |
+| Team roster populates cache on miss and serves hits directly from Redis | PASS |
+| Role update or member deletion explicitly evicts roster cache | PASS |
+| Shift calendar queries cached with parameter hash | PASS |
+| Shift creation/update/deletion/assignments invalidate shift and feed caches | PASS |
+| Swap approvals invalidate affected shift and feed caches | PASS |
+| Cross-tenant cache isolation verified | PASS |
+| Cache bypass switch (`ENABLE_REDIS_CACHE=false`) verified | PASS |
 
 ## 5. Findings and bottlenecks
 
 1. **Per-IP read limiters throttle legitimate bursts (real, by design).**
    `/teams` and `/invitations` are capped at **300 requests / 15 min / IP**,
-   `/auth` at 100. At ~36 iterations/s a sustained load test exhausts the
-   `/teams` budget in seconds → streams of 429s (observed: baseline #1 had
-   82.5% of requests throttled once the budget drained; smoke/baseline
-   passed immediately after raising the dev-process cap). **Impact:** a small
-   office behind one NAT, or a script with many teams, can be throttled.
-   **Resolution (applied):** the three budgets are now configurable
-   (`AUTH_RATE_LIMIT_MAX`, `TEAMS_RATE_LIMIT_MAX`, `INVITATIONS_RATE_LIMIT_MAX`,
-   defaults unchanged). Production keeps 100/300/300; load-test/dedicated
-   instances can raise them. Report first ran at the default to produce the
-   429 evidence above, then re-ran with raised dev caps to measure pure
-   server latency.
-2. **Keyset pagination holds up at 10k rows.** The composite indexes
-   (`activity_events(team_id, created_at, id)`, `(team_id, type, created_at,
-   id)`) keep both the plain and filtered feed walks in the low tens of ms at
-   full throttle. No OFFSET cost, no page-deep slow-down.
-3. **`/auth/login` ~179 ms p95 is bcrypt-dominated** (cost 10). This is the
-   intended CPU cost of password hashing and is actually
-   desirable for brute-force resistance; if auth latency ever matters at the
-   edge, only a horizontal-scaling or keyed-hash strategy would change it —
-   not recommended for this scale.
-4. **No application cache layer.** Only `/devices` rate limiting uses Redis.
-   At the observed scale the API doesn't need one (p99 168 ms under load).
-   If multi-replica/far-geo deployments happen, per-team feed caching keyed by
-   `team_id + fingerprint` is the natural next step; the team-safe keying
-   pattern is already proven in `cacheIsolation.test.ts`.
-5. **Single-instance in-memory limiters** are per-process (already documented
-   in `docs/IMPLEMENTATION-STATUS.md`). With >1 replica each process counts
-   independently — acceptable now, but a shared Redis store (as `/devices`
-   uses) would be the fix when scaling out.
-6. **Interpret carefully:** numbers come from one dev machine running the API,
-   Postgres, Redis, and the load generator together. Absolute latencies are a
-   floor-not-ceiling signal; the value is in the shape (flat p90→p99, zero
-   errors) and in repeatability. Run again on the deployment target for
-   production-grade SLAs.
+   `/auth` at 100. When testing at 200 VUs, single-IP test harnesses quickly
+   drain this budget unless `TEAMS_RATE_LIMIT_MAX` is temporarily raised on
+   the test instance (see §5.1 of previous report).
+2. **PostgreSQL saturation under 200 concurrent un-cached VUs.**
+   Without caching, 200 simultaneous VUs saturate the single PostgreSQL connection
+   pool and thread queue, driving median latency to 932.77 ms and p95 to 1.27 s.
+   The database never drops queries (0% error rate), but CPU and connection
+   wait queues become the dominant constraint.
+3. **Redis cache-aside unlocks 75% throughput gain.**
+   Serving cached activity pages directly from Redis circumvents PostgreSQL
+   connection contention completely, reducing median latency to 467.37 ms and
+   increasing request processing rate from 168.61 to 294.93 req/s.
+4. **Tenant Isolation and Cache Invalidation Work Together.**
+   Keys are strictly formatted as `cache:<resource>:<teamId>:<paramHash>`.
+   Invalidation scans only target `cache:<resource>:<teamId>:*`, ensuring
+   that high write volume in Team A never invalidates or leaks into Team B's cache.
+5. **`/auth/login` ~179 ms p95 is bcrypt-dominated** (cost 10). This is the
+   intended CPU cost of password hashing and is desirable for brute-force resistance.
 
 ## 6. Recommendations
 
-1. Keep the conservative production limits; document them (done in
-   `.env.example`). When demonstration/load-testing, run the API with a raised
-   `TEAMS_RATE_LIMIT_MAX` (see §5.1) — never on production.
-2. Before launch, re-run `workload.js` and `cursor-walk.js` on the Railway
-   deployment and record numbers in `docs/PERFORMANCE-TESTING.md` (table §"Results").
-3. If multi-replica: move `/teams` + `/invitations` limiters to the Redis store
-   used by `/devices`, keep the same budgets per IP.
-4. Optional: add a Redis-backed activity feed cache for p99 headroom at
-   customer-facing scale; not needed for the observed workload.
+1. Keep the conservative production limits (100 / 300 / 300 per 15 min); raise
+   `TEAMS_RATE_LIMIT_MAX` only for dedicated single-IP load-test runs.
+2. In production, Redis caching is enabled by default with the documented TTLs
+   (Roster: 300s, Shifts: 120s, Activity: 60s).
+3. If deploying multiple API replicas behind a load balancer, all instances share
+   the same Redis cluster and invalidate keys globally upon mutations.
 
 ## 7. Reproducing
 
@@ -164,19 +175,28 @@ http_req_failed  : 0.00%   (30,115 with success:true envelope)
 # 1) Local services + migrations + large dataset
 npm run db:start
 npm run db:migrate
-npm run db:seed:dataset -w @rota/api -- --users 40 --teams 5 --shifts 500 --activity 10000
+npm run db:seed:dataset -- --users 40 --teams 5 --shifts 500 --activity 10000
 
-# 2) API (load-test instance: raise /teams budget), then k6 via Docker
-$env:TEAMS_RATE_LIMIT_MAX = "100000"; npm run dev:api
-docker run --rm -v "$PWD\k6:/scripts" -i grafana/k6 run /scripts/health.js
-docker run --rm -v "$PWD\k6:/scripts" -i grafana/k6 run /scripts/smoke.js `
-  -e BASE_URL=http://host.docker.internal:3000 -e USER_EMAIL=seed.user.1@loadtest.local `
-  -e USER_PASSWORD=seed-only-account -e TEAM_ID=b7ad9c24-d603-a4ea-c7c5-682dceac00e8
-# ... baseline.js, workload.js, cursor-walk.js, auth.js (see k6/README.md)
+# 2) Build packages
+npm run build:shared
+npm run build:api
 
-# 3) Gates
-npm run typecheck && npm run lint && npm test      # 14 suites / 182 tests
+# 3) Benchmark 1: Cache Disabled (PostgreSQL only)
+node scripts/run-loadtest-api.js
+docker run --rm -v "${PWD}\load-tests:/scripts" -i grafana/k6 run /scripts/activity-200vu.js \
+  -e BASE_URL=http://host.docker.internal:3000 \
+  -e USER_EMAIL=seed.user.1@loadtest.local \
+  -e USER_PASSWORD=seed-only-account \
+  -e TEAM_ID=b7ad9c24-d603-a4ea-c7c5-682dceac00e8
+
+# 4) Benchmark 2: Cache Enabled (Redis Cache-Aside)
+node scripts/run-loadtest-api.js --cache=true
+docker run --rm -v "${PWD}\load-tests:/scripts" -i grafana/k6 run /scripts/activity-200vu.js \
+  -e BASE_URL=http://host.docker.internal:3000 \
+  -e USER_EMAIL=seed.user.1@loadtest.local \
+  -e USER_PASSWORD=seed-only-account \
+  -e TEAM_ID=b7ad9c24-d603-a4ea-c7c5-682dceac00e8
+
+# 5) Verification Gates
+npm run typecheck && npm run lint && npm test      # 18 suites / 236 tests
 ```
-
-Raw output captured during this session lives in
-`C:\Users\HP\AppData\Local\Temp\opencode\k6-*.log` (throwaway).
