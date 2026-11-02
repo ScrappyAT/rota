@@ -25,6 +25,7 @@ import { AuthProvider } from '../src/context/AuthContext';
 import { TeamProvider } from '../src/context/TeamContext';
 import { NetworkProvider } from '../src/context/NetworkContext';
 import { NotificationProvider } from '../src/context/NotificationContext';
+import { SettingsProvider,useSettings } from '../src/context/SettingsContext';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClient } from '../src/query/queryClient';
 
@@ -52,11 +53,13 @@ export default function RootLayout() {
     <AuthProvider>
       <QueryClientProvider client={queryClient}>
         <NetworkProvider>
-          <NotificationProvider>
+          <SettingsProvider>
             <TeamProvider>
+              <NotificationProvider>
               <RootLayoutNav />
+              </NotificationProvider>
             </TeamProvider>
-          </NotificationProvider>
+          </SettingsProvider>
         </NetworkProvider>
       </QueryClientProvider>
     </AuthProvider>
@@ -64,7 +67,9 @@ export default function RootLayout() {
 }
 
 function RootLayoutNav() {
-  const colorScheme = useColorScheme();
+  const systemScheme = useColorScheme();
+  const { state } = useSettings();
+  const colorScheme = !state.settings || state.settings.theme === 'system' ? systemScheme : state.settings.theme;
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
@@ -78,6 +83,7 @@ function RootLayoutNav() {
         <Stack.Screen name="teams/[id]" options={{ title: 'Team Details' }} />
         <Stack.Screen name="shifts/new" options={{ title: 'Create Shift' }} />
         <Stack.Screen name="shifts/[shiftId]" options={{ title: 'Shift Details' }} />
+        <Stack.Screen name="swaps/[swapId]" options={{ title: 'Swap request' }} />
         <Stack.Screen name="billing/redirect" options={{ headerShown: false }} />
         <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
       </Stack>

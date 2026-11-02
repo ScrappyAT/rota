@@ -1,3 +1,4 @@
+import { drainTestJobs } from './helpers/jobs';
 import request from 'supertest';
 import { app } from '../src/index';
 import { pool } from '../src/db';
@@ -24,6 +25,8 @@ describe('Push Notifications Integration', () => {
     JSON.parse(fetchMock.mock.calls[fetchMock.mock.calls.length - 1][1].body as string);
 
   beforeAll(async () => {
+    const url=new URL(process.env.DATABASE_URL!);if(url.hostname!=='127.0.0.1'||url.port!=='5540'||url.pathname!=='/rota_r1_test')throw new Error('Disposable test server only');
+    await pool.query('DELETE FROM job_outbox');
     // Fetch must be real enough to inspect; the app only calls it for Expo Push.
     fetchMock.mockImplementation(async () =>
       ({ ok: true, json: async () => ({ data: [{ status: 'ok' }] }) } as never)
@@ -147,6 +150,7 @@ describe('Push Notifications Integration', () => {
     expect(created.status).toBe(201);
     shift1Id = created.body.data.id;
 
+    await drainTestJobs(['DOMAIN_EVENT','NOTIFICATION']);
     const { rows } = await pool.query(
       `SELECT status, delivered_at, title, body FROM notifications WHERE user_id = $1 AND type = 'SHIFT_ASSIGNED'`,
       [bobId]
@@ -169,6 +173,7 @@ describe('Push Notifications Integration', () => {
     expect(res.status).toBe(201);
     expect(res.body.data).toHaveLength(0); // ON CONFLICT DO NOTHING → nothing inserted
 
+    await drainTestJobs(['DOMAIN_EVENT','NOTIFICATION']);
     const { rows } = await pool.query(
       `SELECT COUNT(*)::int AS n FROM notifications WHERE user_id = $1 AND type = 'SHIFT_ASSIGNED'`,
       [bobId]
@@ -184,6 +189,7 @@ describe('Push Notifications Integration', () => {
     expect(res.status).toBe(201);
     expect(res.body.data).toHaveLength(1);
 
+    await drainTestJobs(['DOMAIN_EVENT','NOTIFICATION']);
     const { rows } = await pool.query(
       `SELECT status FROM notifications WHERE user_id = $1 AND type = 'SHIFT_ASSIGNED'`,
       [charlieId]
@@ -208,6 +214,7 @@ describe('Push Notifications Integration', () => {
     });
     expect(swap.status).toBe(201);
 
+    await drainTestJobs(['DOMAIN_EVENT','NOTIFICATION']);
     const { rows: charlieNotifs } = await pool.query(
       `SELECT status, body FROM notifications WHERE user_id = $1 AND type = 'SWAP_REQUESTED'`,
       [charlieId]
@@ -219,6 +226,7 @@ describe('Push Notifications Integration', () => {
     expect(lastPushBody().to).toEqual([charlieDevice]);
 
     // Alice (team OWNER) was also notified of the swap request
+    await drainTestJobs(['DOMAIN_EVENT','NOTIFICATION']);
     const { rows: aliceNotifs } = await pool.query(
       `SELECT status, body FROM notifications WHERE user_id = $1 AND type = 'SWAP_REQUESTED'`,
       [aliceId]
@@ -241,12 +249,14 @@ describe('Push Notifications Integration', () => {
 
   it('9. Rejecting a targeted swap notifies the requester', async () => {
     const callsBefore = fetchMock.mock.calls.length;
+    await drainTestJobs(['DOMAIN_EVENT','NOTIFICATION']);
     const { rows } = await pool.query('SELECT id FROM swap_requests WHERE shift_id = $1', [shift2Id]);
     const swapId = rows[0].id;
 
     const res = await request(app).post(`/teams/${teamAId}/swaps/${swapId}/reject`).set('Authorization', `Bearer ${charlieToken}`).send({});
     expect(res.status).toBe(200);
 
+    await drainTestJobs(['DOMAIN_EVENT','NOTIFICATION']);
     const { rows: notifs } = await pool.query(
       `SELECT status FROM notifications WHERE user_id = $1 AND type = 'SWAP_REJECTED'`,
       [bobId]
@@ -263,11 +273,13 @@ describe('Push Notifications Integration', () => {
     });
     expect(freshSwap.status).toBe(201);
     const swapId = freshSwap.body.data.id;
+    await drainTestJobs(['DOMAIN_EVENT','NOTIFICATION']);
 
     const callsBefore = fetchMock.mock.calls.length;
     const res = await request(app).post(`/teams/${teamAId}/swaps/${swapId}/approve`).set('Authorization', `Bearer ${charlieToken}`).send();
     expect(res.status).toBe(200);
 
+    await drainTestJobs(['DOMAIN_EVENT','NOTIFICATION']);
     const { rows: notifs } = await pool.query(
       `SELECT status FROM notifications WHERE user_id = $1 AND type = 'SWAP_APPROVED'`,
       [bobId]
@@ -293,6 +305,7 @@ describe('Push Notifications Integration', () => {
     });
     expect(openSwap.status).toBe(201);
 
+    await drainTestJobs(['DOMAIN_EVENT','NOTIFICATION']);
     const { rows: ownerNotifs } = await pool.query(
       `SELECT status, body FROM notifications WHERE user_id = $1 AND event_key = $2`,
       [aliceId, `swap_requested:${openSwap.body.data.id}:admin:${aliceId}`]
@@ -322,6 +335,7 @@ describe('Push Notifications Integration', () => {
       eventKey: 'swap_rejected:pref-off:bob',
     });
 
+    await drainTestJobs(['DOMAIN_EVENT','NOTIFICATION']);
     const { rows } = await pool.query(`SELECT status, last_error FROM notifications WHERE event_key = $1`, ['swap_rejected:pref-off:bob']);
     expect(rows[0].status).toBe('SKIPPED');
     expect(rows[0].last_error).toBe('disabled by user preference');
@@ -345,9 +359,11 @@ describe('Push Notifications Integration', () => {
       eventKey: 'swap_requested:invalid-token:charlie',
     });
 
+    await drainTestJobs(['DOMAIN_EVENT','NOTIFICATION']);
     const { rows } = await pool.query(`SELECT status, last_error FROM notifications WHERE event_key = $1`, ['swap_requested:invalid-token:charlie']);
-    expect(rows[0].status).toBe('FAILED');
+    expect(rows[0].status).toBe('SKIPPED');
 
+    await drainTestJobs(['DOMAIN_EVENT','NOTIFICATION']);
     const { rows: remaining } = await pool.query('SELECT token FROM device_tokens WHERE user_id = $1', [charlieId]);
     expect(remaining).toHaveLength(0);
 
@@ -365,6 +381,7 @@ describe('Push Notifications Integration', () => {
     await notify(event);
     await notify(event);
 
+    await drainTestJobs(['DOMAIN_EVENT','NOTIFICATION']);
     const { rows } = await pool.query(`SELECT COUNT(*)::int AS n FROM notifications WHERE event_key = $1`, ['shift_assigned:manual:bob']);
     expect(rows[0].n).toBe(1);
     expect(fetchMock.mock.calls.length).toBe(callsBefore + 1);
@@ -382,6 +399,7 @@ describe('Push Notifications Integration', () => {
     });
     expect(created.status).toBe(201);
 
+    await drainTestJobs(['DOMAIN_EVENT','NOTIFICATION']);
     const { rows } = await pool.query(
       `SELECT status, last_error FROM notifications WHERE user_id = $1 AND type = 'SHIFT_ASSIGNED' AND title = 'New shift assigned'
        AND body LIKE '%Doomed push shift%'`,
@@ -389,7 +407,7 @@ describe('Push Notifications Integration', () => {
     );
     expect(rows).toHaveLength(1);
     expect(rows[0].status).toBe('FAILED');
-    expect(rows[0].last_error).toBe('delivery exception');
+    expect(rows[0].last_error).toBe('delivery outcome uncertain');
     expect(fetchMock.mock.calls.length).toBe(callsBefore + 1);
   });
 });

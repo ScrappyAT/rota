@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useRef, useState } from 'r
 import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { useAuth } from './AuthContext';
+import { useTeam } from './TeamContext';
 import { queryClient } from '../query/queryClient';
 import {
   registerForPushNotificationsAsync,
@@ -20,6 +21,9 @@ const NotificationContext = createContext<NotificationContextValue>({
 
 export function NotificationProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
+  const { selectTeam } = useTeam();
+  const selectTeamRef=useRef(selectTeam);
+  selectTeamRef.current=selectTeam;
   const [pushToken, setPushToken] = useState<string | null>(null);
   const [isRegistered, setIsRegistered] = useState(false);
 
@@ -67,7 +71,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       responseSubRef.current = Notifications.addNotificationResponseReceivedListener(
         (response) => {
           const data = response.notification.request.content.data;
-          handleNotificationPayload(data);
+          void handleNotificationPayload(data,selectTeamRef.current);
         }
       );
     } catch (err) {
@@ -79,7 +83,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       Notifications.getLastNotificationResponseAsync().then((response) => {
         if (response && isMounted) {
           const data = response.notification.request.content.data;
-          handleNotificationPayload(data);
+          void handleNotificationPayload(data,selectTeamRef.current);
         }
       });
     } catch (err) {

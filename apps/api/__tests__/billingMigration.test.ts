@@ -14,7 +14,7 @@ describe('R1 additive upgrade preserves existing NGN records', () => {
       url.pathname = '/rota_r1_upgrade_test';
       database = new Pool({ connectionString: url.toString() });
       const files = fs.readdirSync(path.join(__dirname, '../migrations')).filter(f => f.endsWith('.sql')).sort();
-      for (const file of files.filter(f => !f.startsWith('007_')))
+      for (const file of files.filter(f => f < '007_'))
         await database.query(fs.readFileSync(path.join(__dirname, '../migrations', file), 'utf8'));
       const user = (await database.query("INSERT INTO users(email,first_name,last_name,password_hash) VALUES('historical@test.example','Old','Owner','mock-hash') RETURNING id")).rows[0].id;
       const team = (await database.query("INSERT INTO teams(name,owner_id) VALUES('Historical',$1) RETURNING id", [user])).rows[0].id;

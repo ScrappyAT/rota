@@ -26,7 +26,12 @@
     "db:sharding:stop": "powershell -ExecutionPolicy Bypass -File scripts/stop-sharding.ps1",
     "demo:sharding": "npm run demo:sharding -w @rota/api",
     "test:sharding": "npm run test:sharding -w @rota/api",
-    "test:r1": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-r1.ps1"
+    "test:r1": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-r1.ps1",
+    "worker": "npm run worker -w @rota/api",
+    "worker:dev": "npm run worker:dev -w @rota/api",
+    "test:r2": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-r2.ps1",
+    "jobs:status": "npm run jobs:status -w @rota/api",
+    "jobs:retry": "npm run jobs:retry -w @rota/api --"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

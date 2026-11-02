@@ -26,6 +26,7 @@ export interface ChangePaymentResult {
 export interface VerifyOutcome {
   outcome:string;
   payment?:{status:string};
+  jobId?:string;
 }
 
 export const fetchBillingSummary = async (teamId: string): Promise<BillingSummaryView> => {
@@ -52,6 +53,17 @@ const requestPayment=async(teamId:string,operation:string,input:unknown):Promise
     });
     const data=dataOrThrow(res);
     if(data.payment)await attempts.associate(scope,key,data.payment.txRef);
+    if(data.payment?.status==='FAILED'){await attempts.finish(scope,data.payment.txRef);throw new Error('This payment failed. Please review billing before starting another attempt.');}
+    if(data.processing&&data.payment){
+      for(let i=0;i<12;i++){
+        await new Promise(resolve=>setTimeout(resolve,500));
+        const status=await fetchPaymentStatus(teamId,data.payment.txRef);
+        if(status.status==='FAILED'){await attempts.finish(scope,data.payment.txRef);throw new Error('Payment failed. Please review billing before starting another attempt.');}
+        if(status.status==='SUCCESSFUL'){data.processing=false;break;}
+        if(status.checkoutUrl){data.checkoutUrl=status.checkoutUrl;data.processing=false;break;}
+        if(status.initializationState==='MANUAL_REVIEW')break;
+      }
+    }
     if(!data.payment&&!data.processing) await attempts.finish(scope);
     return data;
   });
@@ -69,7 +81,11 @@ export const verifyPayment = async (
     method: 'POST',
     body: JSON.stringify({ txRef, transactionId }),
   });
-  const result=dataOrThrow(res);
+  let result=dataOrThrow(res);
+  for(let i=0;result.outcome==='PENDING'&&result.jobId&&i<24;i++){
+    await new Promise(resolve=>setTimeout(resolve,500));
+    result=dataOrThrow(await apiClient.request<VerifyOutcome>(`/teams/${teamId}/subscription/verifications/${result.jobId}`));
+  }
   if(result.outcome==='SUCCESS'||result.payment?.status==='SUCCESSFUL'||result.payment?.status==='FAILED')await finishPaymentAttempts(teamId,txRef);
   return result;
 };

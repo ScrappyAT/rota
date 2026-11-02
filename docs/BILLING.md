@@ -166,3 +166,27 @@ the same 120-second budget as its existing setup; its assertions are unchanged.
 Mobile has no runtime test runner; client intent logic is exercised in the API
 Jest process by importing the actual shared implementation. Device checkout
 and a real Flutterwave account's USD capabilities remain unverified.
+
+
+## R2 asynchronous processing amendment
+
+R2 supersedes the synchronous provider-call paragraphs above. Payment creation
+now commits both the R1 idempotency record and initialization/reconciliation
+outbox jobs before returning 202. The worker claims initialization once and
+writes a checkout URL into the saved response. Clients poll payment status and
+reuse the original key/reference. An ambiguous claim is recovered only by GET
+verification of that existing reference; it never starts another checkout.
+
+Webhook requests durably store the first authenticated payload and a job, then
+acknowledge. Workers verify the transaction with Flutterwave before calling the
+unchanged financial reconciliation/ledger guards. Client-requested verification
+also returns a durable job ID and is polled at `/verifications/:jobId`. Verified
+failed payments are reflected in cached idempotency responses so clients cannot
+mistake a failed replay for a successful plan change.
+
+R2 adds transactional billing notices, period/grace recheck jobs and read-only
+reconciliation of pre-R2 pending payments. Unresolved references become
+MANUAL_REVIEW after the bounded verification budget while remaining PENDING for
+later legitimate settlement. R1 prices, separate-floor formulas, currency fences,
+ledger and late-payment revision safeguards remain unchanged. Migration 008
+preservation evidence and all worker guarantees: `R2-IMPLEMENTATION-REPORT.md`.

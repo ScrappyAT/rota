@@ -10,7 +10,7 @@ Status categories:
 - **Not started**
 - **Blocked** — cannot proceed until a listed dependency is resolved.
 
-Last financial correction validation: 2026-10-30; see Milestone R1 below.
+Last correction validation: R2, 2026-11-02; see Milestone R2 below.
 Earlier phase tables and validation history retain their original audit context.
 
 ---
@@ -225,3 +225,36 @@ currency transition; ambiguous checkout initialization has no automatic recovery
 scheduled changes use existing lazy materialization; refunds are accounting-only,
 not a new provider refund feature. Live checkout/device runtime, durable jobs and
 R2-R4 were not performed. Details: `R1-IMPLEMENTATION-REPORT.md`.
+
+
+## Milestone R2 - durable jobs and server settings (2026-11-02)
+
+R1 is merged as PR #1. R2 branch `codex/r2-durable-jobs-settings` starts at
+synchronized main `bd149a2`. R2 remains uncommitted for review; no push, merge,
+deployment, production migration or real provider operation was performed.
+
+| Requirement | Status | Evidence |
+|---|---|---|
+| Transactional business/notification outbox | Completed & verified | Migration 008, activity and notification persistence on the business transaction; rollback/no-worker drills |
+| Redis/BullMQ workers and bounded retries | Completed & verified | Separately runnable worker, SQL attempt/dead tracking, explicit replay and real Redis retry tests |
+| Restart recovery and replay guards | Completed & verified | Killed child workers before work/after SENDING, SQL lock recovery, Redis queue-loss reconstruction, per-device replay checks |
+| Safe ambiguous payment reconciliation | Completed & verified with mocked provider | Original reference GET verification; no second checkout POST; R1 financial tests retained |
+| Server settings and field timestamps | Completed & verified | Authenticated GET/PATCH, strict inputs, legacy compatibility, per-field receive-time LWW and concurrent-write tests |
+| Quiet hours/IANA zones/preferences | Completed & verified | Overnight/same-day/DST cases, deferral, real delayed jobs, current-preference suppression |
+| Push receipt/token handling | Completed & verified with mocked provider | Separate per-device receipt jobs, late invalid-token pruning, partial-success retry |
+| Owner renewal notices and grace rechecks | Completed & verified | Failed-renewal notice, cached FAILED status and deadline EXPIRED transition |
+| Correct team/destination resolution | Implemented; API/shared logic verified | Membership check, explicit route team IDs, exact authorized swap detail, malformed/cross-tenant denial |
+| Mobile settings lifecycle and UI | Implemented, not verified on device | Actual shared optimistic/rollback controller tested; foreground binding, UI, routing and navigation theme compile/lint |
+
+Final verification: 340 tests across 27 suites passed, including the complete
+--detectOpenHandles run with zero detected handles. Typecheck, lint and
+API/shared builds passed; lint has zero errors and five pre-existing warnings.
+
+R1 prices, proration math, immutable ledger, idempotency mapping, revisions and
+late-settlement safeguards are preserved. SQL migrations 001-007 are unchanged.
+Existing PAST_DUE write gates are preserved; the grace access-policy limitation
+is explicitly reported. Unknown external push outcomes require review, and dead
+jobs after prolonged outages need operator action. Language/theme values sync,
+but a full translated/dark-palette UI is not claimed. R3/R4 and submission
+artifacts have not been reopened. See `R2-IMPLEMENTATION-REPORT.md` for all
+files, migration guarantees, failure evidence, audit findings and limitations.

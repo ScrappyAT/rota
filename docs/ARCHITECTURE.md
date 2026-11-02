@@ -241,3 +241,52 @@ inside the transaction. See `docs/SECURITY.md`.
   No normal development/production database or provider is used.
 - Durable jobs, settings, rate-limiter redesign, deployment and R2-R4 are
   outside this milestone. See `R1-IMPLEMENTATION-REPORT.md` for evidence.
+
+
+## Milestone R2 - durable jobs and settings
+
+Business transactions now write `job_outbox` alongside shifts, swaps, billing
+changes and notification records. `addActivity` records DOMAIN_EVENT intents;
+`notify(event, client)` records recipient intents on that same client. Routes
+retain immediate cache invalidation; domain jobs provide durable invalidation
+and notification fanout for shift changes and billing events.
+
+`worker.ts` polls PostgreSQL and dispatches UUID/generation job IDs to BullMQ.
+The same worker process handles notification sends and receipts, webhook jobs,
+checkout initialization, read-only reconciliation/verification, and billing
+period/grace rechecks. It is separately runnable from the API. PostgreSQL status
+and session advisory locks fence overlapping processors; per-device claims fence
+push retries. BullMQ persists delayed work/retries in Redis, and PostgreSQL can
+repopulate missing Redis jobs. Attempt logs and DEAD rows survive worker exits.
+
+Changed/new API contracts:
+
+- `POST /billing/webhook/flutterwave`: verifies the existing v3 verif-hash,
+  inserts an immutable first-received event plus job in one transaction, returns
+  accepted/queued promptly. Provider verification and settlement occur in a job.
+- `POST /teams/:teamId/subscription/{checkout,seats,renew}`: UUID idempotency keys
+  remain mandatory. New payable intents return 202 with the original reference;
+  workers populate the saved 201 checkout response after initialization.
+- `GET /teams/:teamId/subscription/payments/:txRef`: also exposes checkoutUrl
+  and initializationState for bounded client polling.
+- `POST /teams/:teamId/subscription/verify`: enqueues read-only verification and
+  returns 202/PENDING plus jobId. `GET .../verifications/:jobId` returns the stored
+  result/error once processed. All remain owner-only and team-isolated.
+- `GET /settings`, `PATCH /settings`: authenticated user's server-owned quiet
+  hours, IANA zone, categories, fine-grained notification types, language/theme,
+  overall updatedAt and per-field fieldUpdatedAt. Strict input schemas reject
+  caller user IDs and timestamps. The old `/devices/preferences` contract remains
+  backed by the same settings service and original preference columns.
+- `GET /teams/:teamId/swaps/:swapId`: exact notification destination. Owners/
+  managers, the requester and the offered staff member can read; other staff and
+  nonmembers receive 404. UUID input validation returns 400.
+
+Mobile settings refresh on login/foreground; the actual shared SettingsController
+implements optimistic edits and rollback. Notification handling validates team/
+destination IDs, verifies team membership, changes team context, then opens the
+specific shift, swap detail or subscription. Explicit team route params protect
+against a stale selected-team frame. Navigation theme follows the saved theme;
+existing custom screen colors and text are not a complete theme/translation system.
+
+Retry, uncertain-outcome and server-receive-time LWW tradeoffs, operational
+commands and executed evidence are in `R2-IMPLEMENTATION-REPORT.md`.

@@ -2,7 +2,8 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { pool } from '../db';
 import { verifyWebhookHash } from '../billing/flutterwave';
-import { reconcilePayment } from '../billing/service';
+import { enqueueOutbox } from '../services/outbox';
+import { z } from 'zod';
 
 const router = Router();
 
@@ -65,99 +66,21 @@ const webhookLimiter = rateLimit({
   },
 });
 
-const markProcessed = async (eventKey: string, poolClient?: import('pg').PoolClient) => {
-  const query =
-    'UPDATE webhook_events SET processed_at = CURRENT_TIMESTAMP WHERE event_key = $1 AND processed_at IS NULL';
-  if (poolClient) {
-    await poolClient.query(query, [eventKey]);
-  } else {
-    await pool.query(query, [eventKey]);
-  }
-};
-
-// Flutterwave webhook receiver. Validates the `verif-hash` header, dedupes by
-// event key, and settles matching PENDING payments. Must return 200 quickly.
-router.post('/webhook/flutterwave', webhookLimiter, async (req, res, next) => {
+const WebhookSchema = z.object({event:z.string().min(1).max(100),data:z.object({id:z.union([z.string().min(1).max(100),z.number().int().nonnegative()]),tx_ref:z.string().max(200).optional()}).passthrough()}).passthrough();
+// Authenticate and durably accept only. Provider verification/settlement happens in a worker.
+router.post('/webhook/flutterwave',webhookLimiter,async(req,res,next)=>{
   try {
-    const received = typeof req.headers['verif-hash'] === 'string' ? req.headers['verif-hash'] : '';
-    if (!verifyWebhookHash(received)) {
-      return res
-        .status(401)
-        .json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Invalid webhook hash' } });
-    }
-
-    const body = (req.body ?? {}) as {
-      event?: string;
-      data?: { id?: string | number; status?: string; tx_ref?: string; amount?: string | number; currency?: string };
-    };
-    const event = body.event ?? '';
-    const data = body.data ?? {};
-    const eventId = String(data.id ?? '');
-    const eventKey = eventId ? `${event}:${eventId}` : `raw:${JSON.stringify(body)}`;
-
-    const upsert = await pool.query(
-      `INSERT INTO webhook_events (event_key, event_type, payload)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (event_key) DO UPDATE
-         SET event_type = EXCLUDED.event_type,
-             payload = EXCLUDED.payload,
-             received_at = CURRENT_TIMESTAMP
-       RETURNING processed_at`,
-      [eventKey, event, JSON.stringify(body)]
-    );
-    if (upsert.rows[0]?.processed_at) {
-      return res.json({ success: true, data: { processed: false, reason: 'duplicate' } });
-    }
-
-    if (event !== 'charge.completed') {
-      await markProcessed(eventKey);
-      return res.json({ success: true, data: { processed: false, reason: event || 'unknown' } });
-    }
-
-    const txRef = typeof data.tx_ref === 'string' ? data.tx_ref : '';
-    const flwStatus = typeof data.status === 'string' ? data.status.toLowerCase() : '';
-    if ((flwStatus !== 'successful' && flwStatus !== 'failed') || !txRef || !eventId) {
-      await markProcessed(eventKey);
-      return res.json({ success: true, data: { processed: false, reason: 'not-settleable' } });
-    }
-
-    const client = await pool.connect();
+    const received=typeof req.headers['verif-hash']==='string'?req.headers['verif-hash']:'';
+    if(!verifyWebhookHash(received))return res.status(401).json({success:false,error:{code:'UNAUTHORIZED',message:'Invalid webhook hash'}});
+    const body=WebhookSchema.parse(req.body); const eventKey=body.event+':'+String(body.data.id);
+    const client=await pool.connect();
     try {
       await client.query('BEGIN');
-
-      const payRes = await client.query(
-        `SELECT team_id FROM payment_transactions
-         WHERE tx_ref = $1 AND status = $2 AND change_id IS NOT NULL`,
-        [txRef, 'PENDING']
-      );
-      if (payRes.rows.length === 0) {
-        await markProcessed(eventKey, client);
-        await client.query('COMMIT');
-        return res.json({ success: true, data: { processed: false, reason: 'no-pending' } });
-      }
-      const teamId = payRes.rows[0].team_id;
-
-      const gateway = {
-        transactionId: String(data.id),
-        txRef,
-        amountMajor: Number(data.amount),
-        currency: typeof data.currency === 'string' ? data.currency : '',
-        status: flwStatus,
-      };
-
-      const result = await reconcilePayment(client, teamId, txRef, gateway, new Date());
-      await markProcessed(eventKey, client);
+      const inserted=await client.query('INSERT INTO webhook_events(event_key,event_type,payload) VALUES($1,$2,$3) ON CONFLICT(event_key) DO NOTHING RETURNING event_key',[eventKey,body.event,JSON.stringify(body)]);
+      if(inserted.rows.length)await enqueueOutbox(client,{key:'webhook:'+eventKey,kind:'PAYMENT_WEBHOOK',payload:{eventKey}});
       await client.query('COMMIT');
-      res.json({ success: true, data: { processed: true, outcome: result.outcome } });
-    } catch (e) {
-      await client.query('ROLLBACK');
-      throw e;
-    } finally {
-      client.release();
-    }
-  } catch (error) {
-    next(error);
-  }
+      res.json({success:true,data:{accepted:true,processed:false,reason:inserted.rows.length?'queued':'duplicate'}});
+    }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+  }catch(error){next(error);}
 });
-
 export default router;

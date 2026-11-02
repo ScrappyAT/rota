@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { ActivityIndicator, Alert, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { Stack, router } from 'expo-router';
+import { Stack, router, useLocalSearchParams } from 'expo-router';
 import * as Linking from 'expo-linking';
 import { fetchBillingSummary, renewSubscription } from '../../src/api/billing';
 import { useTeam } from '../../src/context/TeamContext';
@@ -19,7 +19,8 @@ const STATUS_COLOR: Record<string, string> = {
 
 export default function SubscriptionScreen() {
   const { team, role } = useTeam();
-  const teamId = team?.id ?? '';
+  const { teamId: notificationTeamId } = useLocalSearchParams<{teamId?:string}>();
+  const teamId = notificationTeamId ?? team?.id ?? '';
   const [busy, setBusy] = useState(false);
 
   const query = useQuery({
