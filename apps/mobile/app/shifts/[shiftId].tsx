@@ -18,12 +18,12 @@ import { Input } from '../../src/components/ui/Input';
 import { typography, spacing, colors, borderRadius } from '../../src/components/ui/theme';
 
 export default function ShiftDetailScreen() {
-  const { shiftId } = useLocalSearchParams<{ shiftId: string }>();
+  const { shiftId,teamId:notificationTeamId } = useLocalSearchParams<{ shiftId: string;teamId?:string }>();
   const { team, role } = useTeam();
   const { user } = useAuth();
   const { isOffline } = useNetwork();
   const queryClient = useQueryClient();
-  const teamId = team?.id ?? '';
+  const teamId = notificationTeamId ?? team?.id ?? '';
 
   const [showPicker, setShowPicker] = useState(false);
   const [selectedUsers, setSelectedUsers] = useState<string[]>([]);

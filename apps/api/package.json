@@ -14,11 +14,16 @@
     "typecheck": "tsc --noEmit",
     "test": "jest",
     "test:sharding": "jest __tests__/sharding.test.ts",
-    "demo:sharding": "ts-node scripts/demo-sharding.ts"
+    "demo:sharding": "ts-node scripts/demo-sharding.ts",
+    "worker": "node dist/worker.js",
+    "worker:dev": "ts-node src/worker.ts",
+    "jobs:status": "node dist/jobs-cli.js",
+    "jobs:retry": "node dist/jobs-cli.js retry"
   },
   "dependencies": {
     "@rota/shared": "*",
     "bcrypt": "^6.0.0",
+    "bullmq": "^5.81.5",
     "cors": "^2.8.6",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",

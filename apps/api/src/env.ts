@@ -11,6 +11,11 @@ const envSchema = z
     NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
     DATABASE_URL: z.string().url(),
     REDIS_URL: z.string().url(),
+    JOB_QUEUE_NAME: z.string().regex(/^[a-zA-Z0-9_-]+$/).default('rota-jobs'),
+    JOB_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(5),
+    JOB_BACKOFF_MS: z.coerce.number().int().min(10).max(60000).default(1000),
+    JOB_POLL_MS: z.coerce.number().int().min(50).max(60000).default(1000),
+    JOB_CONCURRENCY: z.coerce.number().int().min(1).max(4).default(2),
     JWT_SECRET: z.string().default('supersecretjwtkey'),
     JWT_REFRESH_SECRET: z.string().default('supersecretjwtrefreshkey'),
     FLW_SECRET_KEY: z.string().optional(),
@@ -50,6 +55,7 @@ const envSchema = z
       .string()
       .url()
       .default('https://exp.host/--/api/v2/push/send'),
+    EXPO_PUSH_RECEIPTS_URL: z.string().url().default('https://exp.host/--/api/v2/push/getReceipts'),
     // Cache-aside toggle for benchmarking and testing (default true)
     ENABLE_REDIS_CACHE: z
       .string()

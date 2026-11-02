@@ -1,3 +1,5 @@
+import { drainTestJobs } from './helpers/jobs';
+import { processOutboxJob } from '../src/services/job-runtime';
 import crypto from 'crypto';
 import request from 'supertest';
 import { app } from '../src/index';
@@ -41,7 +43,20 @@ const gateways = new Map<string, {
   currency: string;
   status: string;
 }>();
-const post = (actor: Actor, team: string, operation: string, body: object = {}, key = crypto.randomUUID()) => request(app).post(`/teams/${team}/subscription/${operation}`).set('Authorization', `Bearer ${actor.token}`).set('Idempotency-Key', key).send(body);
+const rawPost = (actor: Actor, team: string, operation: string, body: object = {}, key = crypto.randomUUID()) => request(app).post(`/teams/${team}/subscription/${operation}`).set('Authorization', `Bearer ${actor.token}`).set('Idempotency-Key', key).send(body);
+// Model the real asynchronous client: submit, execute worker, then poll/replay.
+const post = async (actor: Actor, team: string, operation: string, body: object = {}, key = crypto.randomUUID()) => {
+  const response=await rawPost(actor,team,operation,body,key);
+  if(response.status!==202)return response;
+  if(operation==='verify'){
+    try{await processOutboxJob(pool,response.body.data.jobId);}catch{/* Poll the durable failure, too. */}
+    let verification=await request(app).get(`/teams/${team}/subscription/verifications/${response.body.data.jobId}`).set('Authorization',`Bearer ${actor.token}`);
+    for(let i=0;verification.status===202&&i<50;i++){await new Promise(resolve=>setTimeout(resolve,10));verification=await request(app).get(`/teams/${team}/subscription/verifications/${response.body.data.jobId}`).set('Authorization',`Bearer ${actor.token}`);}
+    return verification;
+  }
+  await drainTestJobs(['PAYMENT_INITIALIZE']);
+  return rawPost(actor,team,operation,body,key);
+};
 const checkout = (team: string, planCode: string, seats?: number, key?: string) => post(owner, team, 'checkout', { planCode, ...(seats ? { seats } : {}) }, key);
 const register = async (): Promise<Actor> => {
   const email = `r1-${crypto.randomUUID()}@test.example`;
@@ -86,12 +101,23 @@ const tx = async <T>(fn: (client: PoolClient) => Promise<T>) => {
     client.release();
   }
 };
-const webhook = (body: object, hash = 'secret-hash-test') => request(app).post('/billing/webhook/flutterwave').set('verif-hash', hash).send(body);
+const webhook = async (body: object, hash = 'secret-hash-test') => {
+  const payload=body as {event:string;data:{id:string;tx_ref:string;amount:string;currency:string;status:string}};
+  gateways.set(String(payload.data.id),{transactionId:String(payload.data.id),txRef:payload.data.tx_ref,amountMajor:payload.data.amount,currency:payload.data.currency,status:payload.data.status});
+  const response=await request(app).post('/billing/webhook/flutterwave').set('verif-hash',hash).send(body);
+  if(response.status===200&&response.body.data.reason==='queued'){
+    const job=(await pool.query('SELECT id FROM job_outbox WHERE event_key=$1',['webhook:'+payload.event+':'+payload.data.id])).rows[0];
+    await processOutboxJob(pool,job.id);
+    response.body.data={...response.body.data,...(await pool.query('SELECT result FROM job_outbox WHERE id=$1',[job.id])).rows[0].result};
+  }
+  return response;
+};
 describe('R1 billing API,financial integrity and legacy preservation', () => {
   beforeAll(async () => {
     const url = new URL(process.env.DATABASE_URL!);
     if (url.hostname !== '127.0.0.1' || url.port !== '5540' || url.pathname !== '/rota_r1_test')
       throw new Error('This suite requires the disposable R1 test database');
+    await pool.query('DELETE FROM job_outbox');
     process.env.FLW_SECRET_HASH = 'secret-hash-test';
     initialize.mockImplementation(async (input) => ({ link: `https://checkout.test/${input.txRef}` }));
     verify.mockImplementation(async (id) => {
@@ -194,7 +220,7 @@ describe('R1 billing API,financial integrity and legacy preservation', () => {
     const id = crypto.randomUUID();
     gateways.set(id, { transactionId: id, txRef: payment.txRef, amountMajor: '20.00', currency: 'USD', status: 'successful' });
     const results = await Promise.all([post(owner, team, 'verify', { txRef: payment.txRef, transactionId: id }), post(owner, team, 'verify', { txRef: payment.txRef, transactionId: id })]);
-    expect(results.map(r => r.body.data.outcome).sort()).toEqual(['ALREADY_PROCESSED', 'SUCCESS']);
+    expect(results.map(r => r.body.data.outcome).sort()).toEqual(['SUCCESS', 'SUCCESS']);
     expect((await pool.query("SELECT count(*)::int AS n FROM financial_ledger WHERE payment_id=$1 AND kind='CHARGE'", [payment.id])).rows[0].n).toBe(1);
   });
   it('12. downgrade is effective at period end and renewal uses the lower rate', async () => {

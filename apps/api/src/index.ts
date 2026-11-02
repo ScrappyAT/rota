@@ -15,6 +15,7 @@ import teamsRouter from './routes/teams';
 import invitationsRouter from './routes/invitations';
 import billingRouter from './routes/billing';
 import devicesRouter from './routes/devices';
+import settingsRouter from './routes/settings';
 
 const isDev = env.NODE_ENV !== 'production';
 const devOrigins = isDev ? DEFAULT_DEV_ORIGINS : [];
@@ -69,6 +70,7 @@ app.use('/teams', teamsLimiter, teamsRouter);
 app.use('/invitations', invitationsLimiter, invitationsRouter);
 app.use('/devices', redisRateLimit({ windowSeconds: 15 * 60, max: 200, keyPrefix: 'rl:devices' }), devicesRouter);
 app.use('/billing', billingRouter);
+app.use('/settings', redisRateLimit({ windowSeconds: 15 * 60, max: 300, keyPrefix: 'rl:settings' }), settingsRouter);
 
 app.use(errorHandler);
 

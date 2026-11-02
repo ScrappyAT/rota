@@ -1,10 +1,13 @@
+import { notificationTarget,Team } from '@rota/shared';
+import { apiClient } from '../api/client';
+import { dataOrThrow } from '../api/ensure';
 import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
 import { authStorage } from '../storage/authStorage';
 import { AsyncStorage } from '../storage/asyncStorage';
 import { registerDevice, unregisterDevice } from '../api/devices';
-import { router } from 'expo-router';
+import { router,Href } from 'expo-router';
 
 // Default EAS Project ID from app.json
 const FALLBACK_PROJECT_ID = '8294edea-eb20-41b3-b9f3-154b44593873';
@@ -164,29 +167,12 @@ export async function unregisterCurrentDevice(): Promise<void> {
 /**
  * Validates notification payload and navigates to the relevant screen.
  */
-export function handleNotificationPayload(data: unknown): void {
-  if (!data || typeof data !== 'object') return;
-
-  const payload = data as Record<string, unknown>;
-  const event = typeof payload.event === 'string' ? payload.event : '';
-  const shiftId = typeof payload.shiftId === 'string' ? payload.shiftId : '';
-
-  const isUuid = (val: string): boolean =>
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
-
+export async function handleNotificationPayload(data: unknown, selectTeam: (teamId:string)=>Promise<void>): Promise<void> {
+  const target=notificationTarget(data); if(!target)return;
   try {
-    if (event === 'shift_assigned' && shiftId && isUuid(shiftId)) {
-      router.push(`/shifts/${shiftId}`);
-    } else if (
-      event === 'swap_requested' ||
-      event === 'swap_approved' ||
-      event === 'swap_rejected'
-    ) {
-      router.push('/(tabs)/swaps');
-    } else if (shiftId && isUuid(shiftId)) {
-      router.push(`/shifts/${shiftId}`);
-    }
-  } catch (err) {
-    console.warn('[push] Navigation on notification failed:', err);
-  }
+    // Membership is checked before switching context or navigating to another team.
+    dataOrThrow(await apiClient.request<Team>(`/teams/${target.teamId}`));
+    await selectTeam(target.teamId);
+    router.push({pathname:target.path,params:target.params} as Href);
+  }catch{console.warn('[push] Notification destination is unavailable');}
 }

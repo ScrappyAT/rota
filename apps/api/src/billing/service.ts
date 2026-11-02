@@ -15,6 +15,8 @@ import {
 } from './proration';
 import { addActivity } from '../services/activity';
 import { appendLedger,snapshotSubscription } from './ledger';
+import { enqueueOutbox } from '../services/outbox';
+import { notify } from '../services/notifications';
 import { majorToMinor,planMonthlyAmount,prorationBreakdown,MAX_SEATS } from './proration';
 
 export const FREE_PLAN_CODE = 'FREE';
@@ -226,6 +228,11 @@ export const materializeSubscription = async (
   if (next.status!==sub.status) {
     await client.query('UPDATE team_subscriptions SET status=$1,revision=revision+1,updated_at=CURRENT_TIMESTAMP WHERE team_id=$2',[next.status,teamId]);
     await snapshotSubscription(client,teamId,'status transition');
+    if (next.status===SubscriptionStatus.EXPIRED&&!plan.is_free) {
+      const owners=await client.query("SELECT user_id FROM team_memberships WHERE team_id=$1 AND role='OWNER'",[teamId]);
+      for(const owner of owners.rows)await notify({teamId,userId:owner.user_id,type:'BILLING',title:'Subscription access restricted',body:'Your billing period or grace period has ended. Renew to restore access.',
+        data:{teamId,event:'billing_restricted'},eventKey:`restricted:${teamId}:${sub.revision}:${owner.user_id}`},client);
+    }
   }
   return {sub:await getRawSubscription(client,teamId),plan};
 };
@@ -421,6 +428,7 @@ export const openChange = async (
     }
     if (computed.effectiveAt) {
       await client.query('UPDATE team_subscriptions SET scheduled_change_id=$1,revision=revision+1,updated_at=CURRENT_TIMESTAMP WHERE team_id=$2',[change.id,teamId]);
+      await enqueueOutbox(client,{key:'schedule:'+change.id,kind:'BILLING_RECHECK',teamId,payload:{teamId},availableAt:computed.effectiveAt});
     } else if (computed.startsNewPeriod||computed.type===SubscriptionChangeType.RENEWAL) {
       await applyRenewal(client,change,now);
     } else { await applyChange(client,change); }
@@ -611,7 +619,11 @@ export const reconcilePayment = async (
         ]
       );
     }
-    if(change?.type===SubscriptionChangeType.RENEWAL&&currentSub.status===SubscriptionStatus.ACTIVE&&(change.expectedRevision==null||change.expectedRevision===currentSub.revision)) await snapshotSubscription(client,teamId,'renewal failed');
+    if(change?.type===SubscriptionChangeType.RENEWAL&&currentSub.status===SubscriptionStatus.ACTIVE&&(change.expectedRevision==null||change.expectedRevision===currentSub.revision)) {
+      await snapshotSubscription(client,teamId,'renewal failed');
+      await addActivity(client,{teamId,actorId:change.actorId,type:'RENEWAL_FAILED',payload:{paymentId:payment.id}});
+      await enqueueOutbox(client,{key:'grace:'+payment.id,kind:'BILLING_RECHECK',teamId,payload:{teamId},availableAt:addDays(now,billingConfig.graceDays)});
+    }
     return { outcome: 'FAILED',payment:settledPayment,change };
   }
 

@@ -20,10 +20,9 @@ import {
   materializeSubscription,
   getSeatUsage,
   capacityOf,
-  reconcilePayment,
   cleanupStalePendingPayments,
 } from '../billing/service';
-import { verifyTransaction } from '../billing/flutterwave';
+import { enqueueOutbox } from '../services/outbox';
 import { env } from '../env';
 import { planMonthlyAmount } from '../billing/proration';
 
@@ -173,29 +172,30 @@ router.get('/ledger/reconstruction',async(req:AuthRequest,res,next)=>{
   } catch(error){next(error);} finally{client.release();}
 });
 
-// Server-side payment verification (called after the hosted checkout redirect)
-router.post('/verify', async (req: AuthRequest, res, next) => {
+// Queue a read-only provider verification; the app can poll its durable outcome.
+router.post('/verify',async(req:AuthRequest,res,next)=>{
   try {
-    const teamId = uuidParam(req.params.teamId, 'teamId');
-    const data = VerifyPaymentSchema.parse(req.body);
-
-    const gateway = await verifyTransaction(data.transactionId);
-
-    const client = await pool.connect();
-    try {
+    const teamId=uuidParam(req.params.teamId,'teamId'),data=VerifyPaymentSchema.parse(req.body);
+    const client=await pool.connect();
+    try{
       await client.query('BEGIN');
-      const result = await reconcilePayment(client, teamId, data.txRef, gateway, new Date());
-      await client.query('COMMIT');
-      res.json({ success: true, data: result });
-    } catch (e) {
-      await client.query('ROLLBACK');
-      throw e;
-    } finally {
-      client.release();
-    }
-  } catch (error) {
-    next(error);
-  }
+      const payment=await client.query('SELECT id FROM payment_transactions WHERE team_id=$1 AND tx_ref=$2',[teamId,data.txRef]);
+      if(!payment.rows.length)throw new HttpError(404,'PAYMENT_NOT_FOUND','Payment transaction not found');
+      const jobId=await enqueueOutbox(client,{key:'verify:'+payment.rows[0].id+':'+data.transactionId,kind:'PAYMENT_VERIFY',teamId,payload:{teamId,txRef:data.txRef,transactionId:data.transactionId}});
+      await client.query('COMMIT');res.status(202).json({success:true,data:{outcome:'PENDING',jobId}});
+    }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+  }catch(error){next(error);}
+});
+router.get('/verifications/:jobId',async(req:AuthRequest,res,next)=>{
+  try {
+    const result=await pool.query("SELECT status,result FROM job_outbox WHERE id=$1 AND team_id=$2 AND kind='PAYMENT_VERIFY'",[uuidParam(req.params.jobId,'jobId'),uuidParam(req.params.teamId,'teamId')]);
+    if(!result.rows.length)throw new HttpError(404,'NOT_FOUND','Verification not found');
+    const row=result.rows[0];
+    if(row.result?.error)return res.status(row.result.statusCode??400).json({success:false,error:row.result.error});
+    if(row.status==='COMPLETED')return res.json({success:true,data:row.result});
+    if(row.status==='DEAD')return res.status(503).json({success:false,error:{code:'VERIFICATION_FAILED',message:'Verification needs review'}});
+    res.status(202).json({success:true,data:{outcome:'PENDING',jobId:req.params.jobId}});
+  }catch(error){next(error);}
 });
 
 // Check status of a specific payment transaction by txRef
@@ -210,7 +210,7 @@ router.get('/payments/:txRef', async (req: AuthRequest, res, next) => {
     const { rows } = await pool.query(
       `SELECT id, team_id as "teamId", change_id as "changeId", tx_ref as "txRef",
               flw_transaction_id as "flwTransactionId", amount_minor as "amountMinor",
-              currency, status, created_at as "createdAt", updated_at as "updatedAt"
+              currency,status,initialization_state as "initializationState",checkout_url as "checkoutUrl",created_at as "createdAt",updated_at as "updatedAt"
        FROM payment_transactions
        WHERE team_id = $1 AND tx_ref = $2`,
       [teamId, txRef]

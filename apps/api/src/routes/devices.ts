@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { pool } from '../db';
 import { authenticate, AuthRequest } from '../middleware/auth';
+import { readSettings,writeSettings } from '../services/settings';
 
 const router = Router();
 
@@ -88,78 +89,15 @@ router.delete('/', async (req: AuthRequest, res, next) => {
   }
 });
 
-// Read the user's notification preferences (materializing defaults on first read).
-router.get('/preferences', async (req: AuthRequest, res, next) => {
-  try {
-    const userId = req.user!.id;
-    await pool.query(
-      `INSERT INTO notification_preferences (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`,
-      [userId]
-    );
-    const { rows } = await pool.query(
-      `SELECT shift_assigned AS "shiftAssigned",
-              swap_requested AS "swapRequested",
-              swap_approved AS "swapApproved",
-              swap_rejected AS "swapRejected"
-       FROM notification_preferences
-       WHERE user_id = $1`,
-      [userId]
-    );
-    res.json({ success: true, data: rows[0] });
-  } catch (error) {
-    next(error);
-  }
+// Compatibility endpoints share the authoritative settings/timestamps.
+router.get('/preferences',async(req:AuthRequest,res,next)=>{
+  try{const client=await pool.connect();try{const settings=await readSettings(client,req.user!.id);res.json({success:true,data:settings.notificationTypes});}finally{client.release();}}catch(error){next(error);}
 });
-
-// Update notification preferences (partial update; any subset of the toggles).
-router.patch('/preferences', async (req: AuthRequest, res, next) => {
-  try {
-    const data = UpdatePreferencesSchema.parse(req.body);
-    const userId = req.user!.id;
-
-    const sets: string[] = [];
-    const params: unknown[] = [];
-    let n = 1;
-    if (data.shiftAssigned !== undefined) {
-      sets.push(`shift_assigned = $${n++}`);
-      params.push(data.shiftAssigned);
-    }
-    if (data.swapRequested !== undefined) {
-      sets.push(`swap_requested = $${n++}`);
-      params.push(data.swapRequested);
-    }
-    if (data.swapApproved !== undefined) {
-      sets.push(`swap_approved = $${n++}`);
-      params.push(data.swapApproved);
-    }
-    if (data.swapRejected !== undefined) {
-      sets.push(`swap_rejected = $${n++}`);
-      params.push(data.swapRejected);
-    }
-    sets.push('updated_at = CURRENT_TIMESTAMP');
-
-    await pool.query(
-      `INSERT INTO notification_preferences (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`,
-      [userId]
-    );
-    await pool.query(
-      `UPDATE notification_preferences SET ${sets.join(', ')} WHERE user_id = $${n}`,
-      [...params, userId]
-    );
-
-    const { rows } = await pool.query(
-      `SELECT shift_assigned AS "shiftAssigned",
-              swap_requested AS "swapRequested",
-              swap_approved AS "swapApproved",
-              swap_rejected AS "swapRejected"
-       FROM notification_preferences
-       WHERE user_id = $1`,
-      [userId]
-    );
-    res.json({ success: true, data: rows[0] });
-  } catch (error) {
-    next(error);
-  }
+router.patch('/preferences',async(req:AuthRequest,res,next)=>{
+  try{
+    const data=UpdatePreferencesSchema.parse(req.body);const client=await pool.connect();
+    try{await client.query('BEGIN');const settings=await writeSettings(client,req.user!.id,{notificationTypes:data});await client.query('COMMIT');res.json({success:true,data:settings.notificationTypes});}
+    catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+  }catch(error){next(error);}
 });
-
 export default router;

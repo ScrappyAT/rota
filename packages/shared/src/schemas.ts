@@ -254,6 +254,8 @@ export const PaymentTransactionSchema = z.object({
   flwTransactionId: z.string().nullable(),
   amountMinor: z.number().int().nonnegative(),
   currency: z.string().min(3),
+  checkoutUrl:z.string().nullable().optional(),
+  initializationState:z.string().nullable().optional(),
   status: z.nativeEnum(PaymentStatus),
   createdAt: isoDate(),
 });

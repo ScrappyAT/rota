@@ -47,6 +47,7 @@ export const initializeCheckout = async (
   try {
     res = await fetch(`${billingConfig.flwBaseUrl}/v3/payments`, {
       method: 'POST',
+      signal: AbortSignal.timeout(15000),
       headers: {
         Authorization: `Bearer ${secretKey}`,
         'Content-Type': 'application/json',
@@ -102,6 +103,7 @@ export const verifyTransaction = async (transactionId: string): Promise<Verified
       `${billingConfig.flwBaseUrl}/v3/transactions/${encodeURIComponent(transactionId)}/verify`,
       {
         method: 'GET',
+        signal: AbortSignal.timeout(15000),
         headers: { Authorization: `Bearer ${secretKey}` },
       }
     );
@@ -141,4 +143,15 @@ export const verifyWebhookHash = (received: string | undefined): boolean => {
     diff |= received.charCodeAt(i) ^ expected.charCodeAt(i);
   }
   return diff === 0;
+};
+/** Read-only recovery for an existing merchant reference; never starts a checkout. */
+export const verifyTransactionByReference = async (txRef: string): Promise<VerifiedTransaction> => {
+  if (!env.FLW_SECRET_KEY) throw new HttpError(503,'PAYMENTS_UNAVAILABLE','Payment gateway is not configured');
+  const response = await fetch(`${billingConfig.flwBaseUrl}/v3/transactions/verify_by_reference?tx_ref=${encodeURIComponent(txRef)}`, {
+    method:'GET',signal:AbortSignal.timeout(15000),headers:{Authorization:`Bearer ${env.FLW_SECRET_KEY}`},
+  });
+  if (!response.ok) throw new Error('Payment reference is not yet verifiable');
+  const body=await response.json(); const data=body?.data;
+  if (!data || data.id==null) throw new Error('Payment reference is not yet verifiable');
+  return {transactionId:String(data.id),txRef:typeof data.tx_ref==='string'?data.tx_ref:'',amountMajor:data.amount,currency:typeof data.currency==='string'?data.currency:'',status:typeof data.status==='string'?data.status:''};
 };

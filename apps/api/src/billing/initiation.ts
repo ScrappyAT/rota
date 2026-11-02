@@ -3,7 +3,7 @@ import { Pool } from 'pg';
 import { z } from 'zod';
 import { ApiResponse } from '@rota/shared';
 import { HttpError } from '../http-error';
-import { initializeCheckout } from './flutterwave';
+import { enqueueOutbox } from '../services/outbox';
 import { computeChange, computeRenewal, getPurchasablePlan, getSeatUsage, lockBillingTeam, materializeSubscription, openChange, } from './service';
 export interface InitiationInput {
   operation: 'checkout' | 'seats' | 'renew';
@@ -65,6 +65,13 @@ export const initiateBilling = async (pool: Pool, input: InitiationInput): Promi
     const body = { success: true, data: response };
     await client.query(`INSERT INTO billing_idempotency(team_id,actor_id,key,request_hash,response,http_status,completed)
       VALUES($1,$2,$3,$4,$5,$6,$7)`, [input.teamId, input.actorId, key, hash, JSON.stringify(body), opened.payment ? 202 : 200, !opened.payment]);
+    if (opened.payment) {
+      await client.query("UPDATE payment_transactions SET initialization_state='QUEUED' WHERE id=$1", [opened.payment.id]);
+      await enqueueOutbox(client, {key:'initialize:'+opened.payment.id,kind:'PAYMENT_INITIALIZE',teamId:input.teamId,
+        payload:{paymentId:opened.payment.id,teamId:input.teamId,email:input.email,redirectUrl:input.redirectUrl}});
+      await enqueueOutbox(client, {key:'reconcile:'+opened.payment.id,kind:'PAYMENT_RECONCILE',teamId:input.teamId,
+        payload:{paymentId:opened.payment.id,teamId:input.teamId,txRef:opened.payment.txRef},availableAt:new Date(now.getTime()+30000)});
+    }
     await client.query('COMMIT');
   }
   catch (error) {
@@ -76,22 +83,5 @@ export const initiateBilling = async (pool: Pool, input: InitiationInput): Promi
   }
   if (!response.payment)
     return { status: 200, body: { success: true, data: response } };
-  // The committed PROCESSING record is an at-most-once provider-call claim.
-  // A crash or network timeout returns the reserved reference on replay; no second charge is opened.
-  let result: {
-    status: number;
-    body: ApiResponse<unknown>;
-  };
-  try {
-    const checkout = await initializeCheckout({
-      txRef: response.payment.txRef, amountMinor: response.payment.amountMinor,
-      currency: response.payment.currency, redirectUrl: input.redirectUrl, customer: { email: input.email }
-    });
-    result = { status: 201, body: { success: true, data: { ...response, checkoutUrl: checkout.link, processing: false } } };
-  }
-  catch {
-    result = { status: 202, body: { success: true, data: { ...response, processing: true } } };
-  }
-  await pool.query('UPDATE billing_idempotency SET response=$1,http_status=$2,completed=$3 WHERE team_id=$4 AND actor_id=$5 AND key=$6', [JSON.stringify(result.body), result.status, result.status === 201, input.teamId, input.actorId, key]);
-  return result;
+  return { status:202,body:{success:true,data:response} };
 };

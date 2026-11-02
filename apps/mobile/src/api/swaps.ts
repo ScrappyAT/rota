@@ -27,6 +27,9 @@ export interface ListOptions {
   status?: string;
 }
 
+export const fetchSwap = async (teamId: string, swapId: string): Promise<SwapRequest> =>
+  dataOrThrow(await apiClient.request<SwapRequest>(`/teams/${teamId}/swaps/${swapId}`));
+
 export const fetchSwaps = async (teamId: string, options: ListOptions = {}): Promise<PaginatedResponse<SwapRequest>> => {
   const res = await apiClient.request<PaginatedResponse<SwapRequest>>(
     `/teams/${teamId}/swaps${toQuery({

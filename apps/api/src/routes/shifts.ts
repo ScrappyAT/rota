@@ -196,13 +196,8 @@ router.post('/', requireRole([Roles.OWNER, Roles.MANAGER]), async (req: AuthRequ
         payload: { shiftId, shiftTitle: data.title },
       });
 
-      await client.query('COMMIT');
-      await invalidateShifts(teamId);
-      await invalidateActivity(teamId);
       if (assigneeIds.length > 0) {
-        await Promise.all(
-          assigneeIds.map((userId) =>
-            notify({
+        for (const userId of assigneeIds) { await notify({
               teamId,
               userId,
               type: 'SHIFT_ASSIGNED',
@@ -210,10 +205,11 @@ router.post('/', requireRole([Roles.OWNER, Roles.MANAGER]), async (req: AuthRequ
               body: `You've been assigned to "${data.title}" on ${formatShiftDate(data.startsAt)}.`,
               data: { teamId, shiftId, event: 'shift_assigned' },
               eventKey: `shift_assigned:${shiftId}:${userId}`,
-            })
-          )
-        );
+            }, client); };
       }
+      await client.query('COMMIT');
+      await invalidateShifts(teamId);
+      await invalidateActivity(teamId);
       const { shift, assignments } = await getShiftWithAssignments(teamId, shiftId);
       res.status(201).json({ success: true, data: { ...shift, assignments } });
     } catch (e) {
@@ -400,15 +396,10 @@ router.post('/:shiftId/assignments', requireRole([Roles.OWNER, Roles.MANAGER]), 
         payload: { shiftId, assigneeIds: userIds, assigneeNames },
       });
 
-      await client.query('COMMIT');
-      await invalidateShifts(teamId);
-      await invalidateActivity(teamId);
       // ON CONFLICT DO NOTHING + RETURNING yields only rows actually inserted,
       // so only newly assigned members are notified.
       const newlyAssignedIds = insertedRes.rows.map((row: { userId: string }) => row.userId);
-      await Promise.all(
-        newlyAssignedIds.map((userId) =>
-          notify({
+      for (const userId of newlyAssignedIds) { await notify({
             teamId,
             userId,
             type: 'SHIFT_ASSIGNED',
@@ -416,9 +407,10 @@ router.post('/:shiftId/assignments', requireRole([Roles.OWNER, Roles.MANAGER]), 
             body: `You've been assigned to "${shift.title}" on ${formatShiftDate(shift.startsAt)}.`,
             data: { teamId, shiftId, event: 'shift_assigned' },
             eventKey: `shift_assigned:${shiftId}:${userId}`,
-          })
-        )
-      );
+          }, client); };
+      await client.query('COMMIT');
+      await invalidateShifts(teamId);
+      await invalidateActivity(teamId);
       res.status(201).json({ success: true, data: insertedRes.rows });
     } catch (e) {
       await client.query('ROLLBACK');
@@ -564,10 +556,7 @@ router.post('/:shiftId/swaps', async (req: AuthRequest, res, next) => {
         },
       });
 
-      await client.query('COMMIT');
-      await invalidateActivity(teamId);
-
-      const requester = await pool.query(
+      const requester = await client.query(
         'SELECT first_name, last_name FROM users WHERE id = $1',
         [req.user!.id]
       );
@@ -576,7 +565,7 @@ router.post('/:shiftId/swaps', async (req: AuthRequest, res, next) => {
         : 'A teammate';
 
       // 1. Notify team OWNERS and MANAGERS that a shift swap has been requested
-      const admins = await pool.query(
+      const admins = await client.query(
         `SELECT user_id FROM team_memberships
          WHERE team_id = $1 AND role IN ('OWNER', 'MANAGER') AND user_id != $2`,
         [teamId, req.user!.id]
@@ -595,7 +584,7 @@ router.post('/:shiftId/swaps', async (req: AuthRequest, res, next) => {
           body: `${requesterName} requested a shift swap for "${shift.title}" on ${formatShiftDate(shift.startsAt)}.`,
           data: { teamId, shiftId, swapId: swap.id, event: 'swap_requested' },
           eventKey: `swap_requested:${swap.id}:admin:${admin.user_id}`,
-        });
+        }, client);
       }
 
       // 2. If a specific teammate was offered the shift, notify them as well
@@ -608,8 +597,11 @@ router.post('/:shiftId/swaps', async (req: AuthRequest, res, next) => {
           body: `${requesterName} offered you the shift "${shift.title}" on ${formatShiftDate(shift.startsAt)}.`,
           data: { teamId, shiftId, swapId: swap.id, event: 'swap_requested' },
           eventKey: `swap_requested:${swap.id}:${swap.offeredTo}`,
-        });
+        }, client);
       }
+      await client.query('COMMIT');
+      await invalidateActivity(teamId);
+
       res.status(201).json({ success: true, data: swap });
     } catch (e) {
       await client.query('ROLLBACK');

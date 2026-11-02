@@ -29,6 +29,8 @@ Rota is a mobile shift-scheduling application for small businesses such as resta
 4. Run migrations: `npm run db:migrate`
 5. Start the backend: `npm run dev:api`
 6. Start the mobile app: `npm run dev:mobile`
+7. In a separate terminal, start background processing: `npm run worker:dev`.
+   R2 checkout, verification and notification requests persist work for this worker.
 
 ## Available Scripts
 
@@ -48,6 +50,38 @@ Rota is a mobile shift-scheduling application for small businesses such as resta
 - `npm run test`: Runs tests across all workspaces. Integration suites mutate their configured database.
 - `npm run test:r1`: Runs migrations and the complete API regression suite against
   disposable R1 services only (5540/6480/5541/5542). See `docs/BILLING.md` for setup.
+
+## R2 background workers and isolated verification
+
+The API accepts durable intents; a separate `npm run worker:dev` process handles
+push delivery/receipts, Flutterwave initialization and verification, webhook
+settlement, cache invalidation and scheduled billing rechecks. For a built app,
+run `npm run build:api`, then `npm run worker` alongside the existing API process.
+Redis should use AOF persistence and `maxmemory-policy noeviction`. This is a
+runtime setup description; no deployment was performed for R2.
+
+```powershell
+docker compose -f infrastructure/docker-compose.r2-tests.yml up -d --wait
+npm run build:shared
+npm run test:r2
+npm run typecheck
+npm run lint
+npm run build:api
+```
+
+The disposable services use 5540/6480/5541/5542 and separate container names.
+The database names retain the R1 test guard names; they are disposable, not the
+normal development database. The test runner pins dummy keys and local endpoints
+for Flutterwave and both Expo APIs; tests mock providers and keep Jest serial.
+Do not start the normal API/worker with real credentials to verify R2.
+
+Operator inspection: `npm run jobs:status`; explicit dead-job replay after review:
+`npm run jobs:retry -- <outbox-uuid>`. The CLI uses configured database credentials,
+never calls a payment provider, and refuses uncertain push replays. A changed
+payment attempt must never be invented to recover an ambiguous checkout.
+
+Details, API changes, conflict policy, failure drills and limitations:
+`docs/R2-IMPLEMENTATION-REPORT.md`.
 
 ## Current Implementation Status
 

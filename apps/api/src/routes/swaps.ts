@@ -101,6 +101,21 @@ router.get('/', async (req: AuthRequest, res, next) => {
   }
 });
 
+// Exact notification destination, including the offered staff member.
+router.get('/:swapId', requireRole([Roles.OWNER, Roles.MANAGER, Roles.STAFF]), async (req: AuthRequest, res, next) => {
+  try {
+    const teamId = uuidParam(req.params.teamId, 'teamId'), swapId = uuidParam(req.params.swapId, 'swapId');
+    const result = await pool.query(`SELECT ${SWAP_COLUMNS} FROM swap_requests sr JOIN shifts s ON s.id=sr.shift_id
+      LEFT JOIN users req_u ON req_u.id=sr.requested_by LEFT JOIN users off_u ON off_u.id=sr.offered_to
+      WHERE sr.id=$1 AND s.team_id=$2`, [swapId, teamId]);
+    const row = result.rows[0];
+    const membership = await pool.query('SELECT role FROM team_memberships WHERE team_id=$1 AND user_id=$2', [teamId, req.user!.id]);
+    const role = membership.rows[0]?.role;
+    if (!row || !role || (role === Roles.STAFF && row.requestedBy !== req.user!.id && row.offeredTo !== req.user!.id)) throw new HttpError(404, 'NOT_FOUND', 'Swap not found');
+    res.json({ success: true, data: row });
+  } catch (error) { next(error); }
+});
+
 // Approve a swap request
 router.post('/:swapId/approve', async (req: AuthRequest, res, next) => {
   try {
@@ -198,9 +213,6 @@ router.post('/:swapId/approve', async (req: AuthRequest, res, next) => {
         },
       });
 
-      await client.query('COMMIT');
-      await invalidateShifts(teamId);
-      await invalidateActivity(teamId);
       await notify({
         teamId,
         userId: swap.requestedBy,
@@ -209,7 +221,10 @@ router.post('/:swapId/approve', async (req: AuthRequest, res, next) => {
         body: `Your swap request for "${swap.shiftTitle}" was approved.`,
         data: { teamId, shiftId: swap.shiftId, swapId, event: 'swap_approved' },
         eventKey: `swap_approved:${swapId}:${swap.requestedBy}`,
-      });
+      }, client);
+      await client.query('COMMIT');
+      await invalidateShifts(teamId);
+      await invalidateActivity(teamId);
       res.json({ success: true });
     } catch (e) {
       await client.query('ROLLBACK');
@@ -270,8 +285,6 @@ router.post('/:swapId/reject', async (req: AuthRequest, res, next) => {
         payload: { swapId, shiftId: swap.shiftId, shiftTitle: swap.shiftTitle, reason: reason ?? null },
       });
 
-      await client.query('COMMIT');
-      await invalidateActivity(teamId);
       await notify({
         teamId,
         userId: swap.requestedBy,
@@ -280,7 +293,9 @@ router.post('/:swapId/reject', async (req: AuthRequest, res, next) => {
         body: `Your swap request for "${swap.shiftTitle}" was rejected.`,
         data: { teamId, shiftId: swap.shiftId, swapId, event: 'swap_rejected' },
         eventKey: `swap_rejected:${swapId}:${swap.requestedBy}`,
-      });
+      }, client);
+      await client.query('COMMIT');
+      await invalidateActivity(teamId);
       res.json({ success: true });
     } catch (e) {
       await client.query('ROLLBACK');

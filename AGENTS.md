@@ -14,13 +14,14 @@ delivered as an Expo mobile app backed by an Express API.
 Current state: auth, teams, shifts, swaps, activity, push, caching and sharding
 exist. Milestone R1 corrects financial behavior only; see
 `docs/R1-IMPLEMENTATION-REPORT.md` and `docs/IMPLEMENTATION-STATUS.md`.
-R2, R3 and R4 remain outside the authorized correction scope.
+R1 is merged as PR #1. R2 now adds durable jobs and server settings; see
+`docs/R2-IMPLEMENTATION-REPORT.md`. R3 and R4 remain outside the authorized scope.
 
 ## Technology Stack
 
 - **Monorepo**: npm workspaces (`apps/*`, `packages/*`), TypeScript everywhere.
 - **API** (`apps/api`): Node.js, Express 4, Zod validation, `pg`, Redis client,
-  JWT (`jsonwebtoken`), bcrypt, `express-rate-limit`, Jest + Supertest.
+  JWT (`jsonwebtoken`), bcrypt, `express-rate-limit`, BullMQ 5, Jest + Supertest.
 - **Mobile** (`apps/mobile`): Expo SDK 57, Expo Router, React Native 0.86,
   `expo-secure-store` for token storage. See `apps/mobile/AGENTS.md`.
 - **Shared** (`packages/shared`): Zod schemas, types, role constants. Consumed
@@ -168,3 +169,26 @@ These are non-negotiable. Any endpoint touching team data must satisfy them:
    fails for environmental reasons, say so plainly instead of working around it.
 6. If you change ports, scripts, or env var names, update `.env.example`,
    `README.md`, and this file together.
+
+
+## R2 job/settings rules
+
+- Only additive migration 008 is new; never edit migrations 001-007.
+- All shift/swap notification intents and activity outbox rows use the caller's
+  transaction. Do not send pushes or call providers inside request handlers.
+- Worker entry is `apps/api/src/worker.ts`; handlers live in `src/services/`.
+  PostgreSQL job_outbox is authoritative; Redis/BullMQ can be rebuilt from it.
+- Never reinitialize a payment whose initialization claim already exists.
+  Recover ambiguous payments using read-only verification of the original reference.
+- Never automatically resend a SENDING/UNKNOWN device delivery. Preserve failed
+  jobs and attempt records; operator replay rejects uncertain deliveries.
+- Quiet hours and preferences are checked on the server before each send.
+  Settings use server timestamps and field-level last-received-write-wins.
+- `npm run test:r2` pins disposable services on 5540/6480/5541/5542, fake keys,
+  and local non-serving provider URLs. It includes real Redis workers and killed
+  child-worker failure drills. Do not run it on production/development databases.
+- Start the isolated services with `docker compose -f
+  infrastructure/docker-compose.r2-tests.yml up -d --wait` before tests.
+- Job env: JOB_QUEUE_NAME, JOB_ATTEMPTS, JOB_BACKOFF_MS, JOB_POLL_MS,
+  JOB_CONCURRENCY, EXPO_PUSH_RECEIPTS_URL (see .env.example).
+- R2 remains uncommitted for review; no push, merge, deployment or R3/R4 work.
