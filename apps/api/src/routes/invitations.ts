@@ -5,7 +5,7 @@ import { authenticate, AuthRequest } from '../middleware/auth';
 import { requireRole } from '../middleware/tenant';
 import { Roles } from '@rota/shared';
 import { addActivity } from '../services/activity';
-import { assertCanGrow } from '../billing/service';
+import { assertCanGrow,lockBillingTeam } from '../billing/service';
 import {
   generateInvitationCode,
   hashInvitationCode,
@@ -61,7 +61,9 @@ router.post('/team/:teamId', requireRole([Roles.OWNER, Roles.MANAGER]), async (r
 
       // Subscription gates: the team must be active and have seats available
       // for the additional member this invitation represents.
-      await assertCanGrow(client, teamId, new Date(), 1);
+      await lockBillingTeam(client,teamId);
+      const reserved=await client.query('SELECT id FROM invitations WHERE team_id=$1 AND email=$2 AND accepted_at IS NULL AND expires_at>NOW()',[teamId,email.toLowerCase()]);
+      await assertCanGrow(client,teamId,new Date(),reserved.rows.length?0:1);
 
       // Check if user is already a member
       const existingUser = await client.query('SELECT id FROM users WHERE email = $1', [email.toLowerCase()]);
@@ -190,7 +192,11 @@ router.post('/accept', acceptLimiter, async (req: AuthRequest, res, next) => {
         });
       }
 
-      const invite = inviteRes.rows[0];
+      let invite=inviteRes.rows[0];
+      await lockBillingTeam(client,invite.team_id);
+      const fresh=await client.query('SELECT id,team_id,email,role,attempts FROM invitations WHERE id=$1 AND token_hash=$2 AND accepted_at IS NULL AND expires_at>NOW() FOR UPDATE',[invite.id,tokenHash]);
+      if (!fresh.rows.length) {await client.query('ROLLBACK');return res.status(400).json({success:false,error:{code:'INVALID_TOKEN',message:'Invalid or expired invitation'}});}
+      invite=fresh.rows[0];
 
       if (req.user!.email.toLowerCase() !== invite.email.toLowerCase()) {
         // Increment attempts on the targeted invitation
@@ -211,6 +217,7 @@ router.post('/accept', acceptLimiter, async (req: AuthRequest, res, next) => {
         });
       }
 
+      await assertCanGrow(client,invite.team_id,new Date(),0);
       await client.query(
         'INSERT INTO team_memberships (team_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT (team_id, user_id) DO NOTHING',
         [invite.team_id, req.user!.id, invite.role]

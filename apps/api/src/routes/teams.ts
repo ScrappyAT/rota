@@ -10,6 +10,7 @@ import swapsRouter from './swaps';
 import activityRouter from './activity';
 import subscriptionRouter from './subscription';
 import { billingConfig } from '../billing/config';
+import { snapshotSubscription } from '../billing/ledger';
 
 const router = Router();
 
@@ -44,6 +45,7 @@ router.post('/', async (req: AuthRequest, res, next) => {
          VALUES ($1, $2, 1, 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + make_interval(days => $3))`,
         [team.id, 'FREE', billingConfig.periodDays]
       );
+      await snapshotSubscription(client,team.id,'team provisioned');
       await client.query('COMMIT');
       res.status(201).json({ success: true, data: team });
     } catch (e) {

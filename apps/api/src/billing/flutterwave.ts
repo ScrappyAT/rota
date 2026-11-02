@@ -1,5 +1,6 @@
 import { env } from '../env';
 import { billingConfig } from './config';
+import { minorToMajor } from './proration';
 import { HttpError } from '../http-error';
 
 /**
@@ -8,14 +9,14 @@ import { HttpError } from '../http-error';
  * - verify:   GET  {base}/v3/transactions/{id}/verify -> data
  * - webhook:  validated with the `verif-hash` header value (not an HMAC).
  *
- * Flutterwave takes amounts in the currency's standard major unit (naira),
+ * Flutterwave takes amounts in the currency's standard major unit (dollars or naira),
  * not minor units, so minor-unit values are converted before sending and
  * compared after verifying.
  */
 
 export interface InitializePaymentInput {
   txRef: string;
-  /** Amount in minor units (kobo). Converted to the gateway major unit. */
+  /** Amount in minor units (cents or kobo). Converted to the gateway major unit. */
   amountMinor: number;
   currency: string;
   redirectUrl: string;
@@ -26,8 +27,7 @@ export interface InitializePaymentResult {
   link: string;
 }
 
-const gatewayAmount = (amountMinor: number): number =>
-  Math.round(amountMinor / billingConfig.minorUnitsPerMajor);
+const gatewayAmount=minorToMajor;
 
 const secretsPresent = (): string | null => {
   const secretKey = env.FLW_SECRET_KEY;
@@ -85,7 +85,7 @@ export interface VerifiedTransaction {
   transactionId: string;
   txRef: string;
   /** Amount reported by the gateway, in the currency's major unit. */
-  amountMajor: number;
+  amountMajor:number|string;
   currency: string;
   status: string;
 }
@@ -122,7 +122,7 @@ export const verifyTransaction = async (transactionId: string): Promise<Verified
   return {
     transactionId: String(data.id),
     txRef: typeof data.tx_ref === 'string' ? data.tx_ref : '',
-    amountMajor: Number(data.amount),
+    amountMajor:data.amount,
     currency: typeof data.currency === 'string' ? data.currency : '',
     status: typeof data.status === 'string' ? data.status : '',
   };

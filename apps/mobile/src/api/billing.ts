@@ -1,4 +1,7 @@
 import { apiClient } from './client';
+import { randomUUID } from 'expo-crypto';
+import { PaymentAttempts } from '@rota/shared';
+import { authStorage } from '../storage/authStorage';
 import { dataOrThrow, toQuery } from './ensure';
 import {
   BillingInvoice,
@@ -16,11 +19,13 @@ export interface BillingSummaryView extends BillingSummary {
 export interface ChangePaymentResult {
   change: SubscriptionChange;
   payment: PaymentTransaction | null;
-  checkoutUrl: string | null;
+  checkoutUrl:string|null;
+  processing?:boolean;
 }
 
 export interface VerifyOutcome {
-  outcome: string;
+  outcome:string;
+  payment?:{status:string};
 }
 
 export const fetchBillingSummary = async (teamId: string): Promise<BillingSummaryView> => {
@@ -33,39 +38,27 @@ export const fetchPlans = async (teamId: string): Promise<SubscriptionPlan[]> =>
   return dataOrThrow(res);
 };
 
-export const createCheckout = async (
-  teamId: string,
-  input: { planCode: string; seats?: number; returnUrl?: string }
-): Promise<ChangePaymentResult> => {
-  const res = await apiClient.request<ChangePaymentResult>(`/teams/${teamId}/subscription/checkout`, {
-    method: 'POST',
-    body: JSON.stringify(input),
-  });
-  return dataOrThrow(res);
+const attempts=new PaymentAttempts(authStorage,randomUUID);
+const attemptScope=async(teamId:string,operation:string)=>`${await authStorage.getItemAsync('userId')}:${teamId}:${operation}`;
+export const finishPaymentAttempts=async(teamId:string,reference?:string)=>{
+  if(!reference)return;
+  await Promise.all(['checkout','seats','renew'].map(async operation=>attempts.finish(await attemptScope(teamId,operation),reference)));
 };
-
-export const changeSeats = async (
-  teamId: string,
-  input: number | { seats: number; returnUrl?: string }
-): Promise<ChangePaymentResult> => {
-  const body = typeof input === 'number' ? { seats: input } : input;
-  const res = await apiClient.request<ChangePaymentResult>(`/teams/${teamId}/subscription/seats`, {
-    method: 'POST',
-    body: JSON.stringify(body),
+const requestPayment=async(teamId:string,operation:string,input:unknown):Promise<ChangePaymentResult>=>{
+  const scope=await attemptScope(teamId,operation);
+  return attempts.execute(scope,input,async key=>{
+    const res=await apiClient.request<ChangePaymentResult>(`/teams/${teamId}/subscription/${operation}`,{
+      method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify(input),
+    });
+    const data=dataOrThrow(res);
+    if(data.payment)await attempts.associate(scope,key,data.payment.txRef);
+    if(!data.payment&&!data.processing) await attempts.finish(scope);
+    return data;
   });
-  return dataOrThrow(res);
 };
-
-export const renewSubscription = async (
-  teamId: string,
-  input?: { returnUrl?: string }
-): Promise<ChangePaymentResult> => {
-  const res = await apiClient.request<ChangePaymentResult>(`/teams/${teamId}/subscription/renew`, {
-    method: 'POST',
-    body: input ? JSON.stringify(input) : undefined,
-  });
-  return dataOrThrow(res);
-};
+export const createCheckout=(teamId:string,input:{planCode:string;seats?:number;returnUrl?:string})=>requestPayment(teamId,'checkout',input);
+export const changeSeats=(teamId:string,input:number|{seats:number;returnUrl?:string})=>requestPayment(teamId,'seats',typeof input==='number'?{seats:input}:input);
+export const renewSubscription=(teamId:string,input?:{returnUrl?:string})=>requestPayment(teamId,'renew',input??{});
 
 export const verifyPayment = async (
   teamId: string,
@@ -76,7 +69,9 @@ export const verifyPayment = async (
     method: 'POST',
     body: JSON.stringify({ txRef, transactionId }),
   });
-  return dataOrThrow(res);
+  const result=dataOrThrow(res);
+  if(result.outcome==='SUCCESS'||result.payment?.status==='SUCCESSFUL'||result.payment?.status==='FAILED')await finishPaymentAttempts(teamId,txRef);
+  return result;
 };
 
 export const fetchPaymentStatus = async (

@@ -55,7 +55,7 @@ export default function PlansScreen() {
       if (res.checkoutUrl) {
         const outcome = await openCheckout(teamId, res.checkoutUrl, res.payment?.txRef);
         if (outcome === 'settled') {
-          Alert.alert('Success', 'Your plan change is complete.');
+          Alert.alert('Success', res.change.effectiveAt?'Your plan change is scheduled for the end of this period.':'Your plan change is complete.');
         } else if (outcome === 'cancelled') {
           Alert.alert('Payment cancelled', 'You cancelled the checkout. Your plan was not changed.');
         } else if (outcome === 'failed') {
@@ -63,8 +63,10 @@ export default function PlansScreen() {
         } else {
           Alert.alert('Payment pending', 'Your payment is being verified and will update once confirmed. Pull down to refresh.');
         }
+      } else if(res.processing){
+        Alert.alert('Payment pending','Checkout initialization is unresolved. Retry to retrieve the same attempt; no new payment will be opened.');
       } else {
-        Alert.alert('Success', 'Plan change applied.');
+        Alert.alert('Success',res.change.effectiveAt?'Plan change scheduled for the end of this billing period.':'Plan change applied.');
       }
       summary.refetch();
       plans.refetch();
@@ -99,9 +101,9 @@ export default function PlansScreen() {
 
       <View>
         {plans.data.map((plan) => {
-          const isCurrent = plan.code === currentCode;
+          const isCurrent=plan.code===currentCode&&plan.currency===summary.data?.subscription.currency;
           const isSelected = plan.code === selected;
-          const pricePerSeatMinor = plan.pricePerSeatMinor ?? plan.price_per_seat_minor ?? 0;
+          const pricePerSeatMinor=plan.basePriceMinor??plan.pricePerSeatMinor??plan.price_per_seat_minor??0;
           const maxSeats = plan.maxSeats ?? plan.max_seats ?? 0;
           const isFree = plan.isFree ?? plan.is_free ?? pricePerSeatMinor === 0;
 
@@ -120,9 +122,9 @@ export default function PlansScreen() {
               <Text style={styles.row}>
                 {isFree || pricePerSeatMinor === 0
                   ? 'Free'
-                  : `${formatMoney(pricePerSeatMinor)} / seat / month`}
+                  : `${formatMoney(plan.basePriceMinor??pricePerSeatMinor,plan.currency)} / month`}
               </Text>
-              <Text style={styles.row}>Up to {maxSeats === 0 ? 'unlimited' : maxSeats} seats</Text>
+              <Text style={styles.row}>{plan.includedSeats??maxSeats} seats included{plan.extraSeatMinor!=null?`; extra seats ${formatMoney(plan.extraSeatMinor,plan.currency)} / month`: '; no extra seats'}</Text>
             </TouchableOpacity>
           );
         })}

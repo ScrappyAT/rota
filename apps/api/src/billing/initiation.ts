@@ -1,0 +1,97 @@
+import crypto from 'crypto';
+import { Pool } from 'pg';
+import { z } from 'zod';
+import { ApiResponse } from '@rota/shared';
+import { HttpError } from '../http-error';
+import { initializeCheckout } from './flutterwave';
+import { computeChange, computeRenewal, getPurchasablePlan, getSeatUsage, lockBillingTeam, materializeSubscription, openChange, } from './service';
+export interface InitiationInput {
+  operation: 'checkout' | 'seats' | 'renew';
+  teamId: string;
+  actorId: string;
+  email: string;
+  key: string;
+  planCode?: string;
+  seats?: number;
+  returnUrl?: string;
+  redirectUrl: string;
+}
+/** Reserve the exact intent before any external call. An ambiguous call is never reissued. */
+export const initiateBilling = async (pool: Pool, input: InitiationInput): Promise<{
+  status: number;
+  body: ApiResponse<unknown>;
+}> => {
+  const key = z.string().uuid().parse(input.key);
+  const hash = crypto.createHash('sha256').update(JSON.stringify({
+    operation: input.operation, planCode: input.planCode ?? null,
+    seats: input.seats ?? null, returnUrl: input.returnUrl ?? null,
+  })).digest('hex');
+  const client = await pool.connect();
+  let response: {
+    change: Awaited<ReturnType<typeof openChange>>['change'];
+    payment: Awaited<ReturnType<typeof openChange>>['payment'];
+    checkoutUrl: string | null;
+    processing: boolean;
+  };
+  try {
+    await client.query('BEGIN');
+    await lockBillingTeam(client, input.teamId);
+    const old = await client.query('SELECT * FROM billing_idempotency WHERE team_id=$1 AND actor_id=$2 AND key=$3', [input.teamId, input.actorId, key]);
+    if (old.rows.length) {
+      if (old.rows[0].request_hash !== hash)
+        throw new HttpError(409, 'IDEMPOTENCY_CONFLICT', 'This key belongs to a different billing request');
+      await client.query('COMMIT');
+      return { status: old.rows[0].http_status, body: old.rows[0].response };
+    }
+    const now = new Date();
+    const { sub, plan } = await materializeSubscription(client, input.teamId, now);
+    let computed;
+    if (input.operation === 'renew') {
+      // Do not bill a renewal for an obsolete scheduled plan before it is due.
+      if (sub.scheduled_change_id)
+        throw new HttpError(409, 'CHANGE_SCHEDULED', 'Renew when the scheduled change becomes effective');
+      computed = computeRenewal(sub, plan);
+    }
+    else {
+      const target = input.operation === 'checkout' ? await getPurchasablePlan(client, input.planCode!) : plan;
+      const seats = Math.max(input.seats ?? sub.seats, target.included_seats ?? 0);
+      const usage = await getSeatUsage(client, input.teamId);
+      if (seats < usage.members + usage.pendingInvites)
+        throw new HttpError(400, 'SEAT_LIMIT_EXCEEDED', 'Seats cannot be below members plus pending invitations');
+      computed = computeChange(sub, plan, target, seats, now);
+    }
+    const opened = await openChange(client, input.teamId, input.actorId, computed, now);
+    response = { ...opened, checkoutUrl: null, processing: Boolean(opened.payment) };
+    const body = { success: true, data: response };
+    await client.query(`INSERT INTO billing_idempotency(team_id,actor_id,key,request_hash,response,http_status,completed)
+      VALUES($1,$2,$3,$4,$5,$6,$7)`, [input.teamId, input.actorId, key, hash, JSON.stringify(body), opened.payment ? 202 : 200, !opened.payment]);
+    await client.query('COMMIT');
+  }
+  catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  }
+  finally {
+    client.release();
+  }
+  if (!response.payment)
+    return { status: 200, body: { success: true, data: response } };
+  // The committed PROCESSING record is an at-most-once provider-call claim.
+  // A crash or network timeout returns the reserved reference on replay; no second charge is opened.
+  let result: {
+    status: number;
+    body: ApiResponse<unknown>;
+  };
+  try {
+    const checkout = await initializeCheckout({
+      txRef: response.payment.txRef, amountMinor: response.payment.amountMinor,
+      currency: response.payment.currency, redirectUrl: input.redirectUrl, customer: { email: input.email }
+    });
+    result = { status: 201, body: { success: true, data: { ...response, checkoutUrl: checkout.link, processing: false } } };
+  }
+  catch {
+    result = { status: 202, body: { success: true, data: { ...response, processing: true } } };
+  }
+  await pool.query('UPDATE billing_idempotency SET response=$1,http_status=$2,completed=$3 WHERE team_id=$4 AND actor_id=$5 AND key=$6', [JSON.stringify(result.body), result.status, result.status === 201, input.teamId, input.actorId, key]);
+  return result;
+};

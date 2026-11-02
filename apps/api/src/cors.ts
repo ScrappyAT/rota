@@ -19,6 +19,7 @@ export const ALLOWED_METHODS = [
 export const ALLOWED_HEADERS = [
   'Content-Type',
   'Authorization',
+  'Idempotency-Key',
   'X-Requested-With',
   'Accept',
   'Origin',

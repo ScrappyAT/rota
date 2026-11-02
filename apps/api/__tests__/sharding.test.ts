@@ -260,7 +260,7 @@ describe('Two-PostgreSQL Sharding Simulation Suite', () => {
           port: 5441,
           database: 'rota_shard_0',
           user: 'postgres',
-          connectionString: 'postgres://postgres:postgres@127.0.0.1:5441/rota_shard_0',
+          connectionString: process.env.SHARD_0_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5441/rota_shard_0',
         },
         {
           id: 1,

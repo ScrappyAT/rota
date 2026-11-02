@@ -228,9 +228,7 @@ describe('change computation (pure)', () => {
   it('16. upgrading from FREE requires payment against the full month', () => {
     const s = sub({ plan_code: 'FREE', seats: 3 });
     const change = computeChange(s, freePlan, growthPlan, 3, now);
-    const expected = Math.round(
-      (300000 * 3 * daysRemainingInPeriod(s.period_ends_at, now)) / billingConfig.periodDays
-    );
+    const expected=300000*3;
     expect(change.type).toBe(SubscriptionChangeType.PLAN_UPGRADE);
     expect(change.amountMinor).toBe(expected);
     expect(change.requiresPayment).toBe(true);
@@ -244,18 +242,20 @@ describe('change computation (pure)', () => {
     expect(change.requiresPayment).toBe(true);
   });
 
-  it('18. downgrading plans applies immediately at no charge', () => {
+  it('18. downgrades schedule at period end with no charge today', () => {
     const s = sub({ plan_code: 'GROWTH', seats: 5 });
     const change = computeChange(s, growthPlan, starterPlan, 5, now);
     expect(change.type).toBe(SubscriptionChangeType.PLAN_DOWNGRADE);
+    expect(change.effectiveAt).toEqual(s.period_ends_at);
     expect(change.amountMinor).toBe(0);
     expect(change.requiresPayment).toBe(false);
   });
 
-  it('19. reducing seats applies immediately at no charge', () => {
+  it('19. seat reductions schedule at period end with no charge today', () => {
     const s = sub({ plan_code: 'STARTER', seats: 7 });
     const change = computeChange(s, starterPlan, starterPlan, 4, now);
     expect(change.type).toBe(SubscriptionChangeType.REDUCE_SEATS);
+    expect(change.effectiveAt).toEqual(s.period_ends_at);
     expect(change.amountMinor).toBe(0);
     expect(change.requiresPayment).toBe(false);
   });

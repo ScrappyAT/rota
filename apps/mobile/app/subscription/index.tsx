@@ -49,6 +49,8 @@ export default function SubscriptionScreen() {
         } else {
           Alert.alert('Payment pending', 'Your payment is being verified and will update once confirmed. Pull down to refresh.');
         }
+      } else if(res.processing){
+        Alert.alert('Payment pending','The original checkout is being resolved. Retry will use the same payment attempt.');
       } else {
         Alert.alert('Success', 'Subscription renewed.');
       }
@@ -93,14 +95,15 @@ export default function SubscriptionScreen() {
           Period: {formatDateTime(sub.periodStartedAt)} – {formatDateTime(sub.periodEndsAt)}
         </Text>
         {sub.graceEndsAt ? <Text style={styles.row}>Grace ends: {formatDateTime(sub.graceEndsAt)}</Text> : null}
-        {sub.planPricePerSeatMinor > 0 ? (
-          <Text style={styles.row}>Price: {formatMoney(sub.planPricePerSeatMinor)} / seat / month</Text>
+        {(sub.monthlyPriceMinor??sub.planPricePerSeatMinor)>0 ? (
+          <Text style={styles.row}>Price: {formatMoney(sub.monthlyPriceMinor??sub.planPricePerSeatMinor,sub.currency??'NGN')} / month</Text>
         ) : null}
         {!data.billingEnabled ? (
           <Text style={styles.warning}>Payments are not enabled on the server. You can manage plan and seats.</Text>
         ) : null}
       </View>
 
+      {sub.scheduledChangeId?<Text style={styles.hint}>A plan or seat reduction is scheduled for the end of this billing period.</Text>:null}
       {data.pendingPayment ? (
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Pending payment</Text>

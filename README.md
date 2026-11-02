@@ -45,9 +45,17 @@ Rota is a mobile shift-scheduling application for small businesses such as resta
   rows.
 - `npm run lint`: Runs ESLint across all workspaces.
 - `npm run typecheck`: Runs TypeScript checks across all workspaces.
-- `npm run test`: Runs tests across all workspaces.
+- `npm run test`: Runs tests across all workspaces. Integration suites mutate their configured database.
+- `npm run test:r1`: Runs migrations and the complete API regression suite against
+  disposable R1 services only (5540/6480/5541/5542). See `docs/BILLING.md` for setup.
 
 ## Current Implementation Status
+
+Milestone R1 corrects assignment USD pricing, separate-floor proration, scheduled
+reductions, payment idempotency and the append-only financial ledger. Legacy NGN
+records remain intact. See `docs/R1-IMPLEMENTATION-REPORT.md`; the Phase 4 counts
+below describe the earlier implementation.
+
 
 - **Phase 1** — Monorepo, shared package, Express bootstrap, Docker Compose,
   Expo shell: complete.

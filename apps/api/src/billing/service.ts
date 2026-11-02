@@ -10,12 +10,12 @@ import {
 import { HttpError } from '../http-error';
 import { billingConfig } from './config';
 import {
-  monthlyAmount,
-  proratedChargeMinor,
   daysRemainingInPeriod,
   addDays,
 } from './proration';
 import { addActivity } from '../services/activity';
+import { appendLedger,snapshotSubscription } from './ledger';
+import { majorToMinor,planMonthlyAmount,prorationBreakdown,MAX_SEATS } from './proration';
 
 export const FREE_PLAN_CODE = 'FREE';
 
@@ -26,6 +26,11 @@ export interface PlanRow {
   max_seats: number;
   currency: string;
   is_free: boolean;
+  public_code?: string | null;
+  pricing_model?: string;
+  base_price_minor?: number;
+  included_seats?: number;
+  extra_seat_minor?: number | null;
   pricePerSeatMinor: number;
   maxSeats: number;
   isFree: boolean;
@@ -40,6 +45,8 @@ export interface SubscriptionRow {
   period_ends_at: Date;
   last_renewal_failed_at: Date | null;
   grace_ends_at: Date | null;
+  revision?: number;
+  scheduled_change_id?: string | null;
 }
 
 export interface ChangeRow {
@@ -54,6 +61,10 @@ export interface ChangeRow {
   amountMinor: number;
   status: SubscriptionChangeStatus;
   createdAt: Date;
+  currency?: string;
+  effectiveAt?: Date | null;
+  expectedRevision?: number;
+  quote?: ComputedChange | null;
 }
 
 export interface PaymentRow {
@@ -81,13 +92,19 @@ export interface ComputedChange {
   toSeats: number | null;
   amountMinor: number;
   requiresPayment: boolean;
+  currency?: string;
+  costMinor?: number;
+  creditMinor?: number;
+  effectiveAt?: Date | null;
+  expectedRevision?: number;
+  startsNewPeriod?: boolean;
 }
 
 const requiresPaymentFor = (amountMin:number, plan: PlanRow): boolean => amountMin > 0 && !plan.is_free;
 
 export const getPlan = async (client: PoolClient, code: string): Promise<PlanRow> => {
   const { rows } = await client.query(
-    `SELECT code, name, price_per_seat_minor, max_seats, currency, is_free
+    `SELECT *
      FROM billing_plans WHERE code = $1`,
     [code]
   );
@@ -96,6 +113,7 @@ export const getPlan = async (client: PoolClient, code: string): Promise<PlanRow
   }
   const r = rows[0];
   return {
+    ...r,
     code: r.code,
     name: r.name,
     price_per_seat_minor: r.price_per_seat_minor,
@@ -110,10 +128,11 @@ export const getPlan = async (client: PoolClient, code: string): Promise<PlanRow
 
 export const listPlans = async (client: PoolClient): Promise<PlanRow[]> => {
   const { rows } = await client.query(
-    `SELECT code, name, price_per_seat_minor, max_seats, currency, is_free
-     FROM billing_plans ORDER BY price_per_seat_minor ASC, code ASC`
+    `SELECT *
+     FROM billing_plans WHERE public_code IS NOT NULL ORDER BY base_price_minor ASC, code ASC`
   );
   return rows.map((r) => ({
+    ...r,
     code: r.code,
     name: r.name,
     price_per_seat_minor: r.price_per_seat_minor,
@@ -126,13 +145,24 @@ export const listPlans = async (client: PoolClient): Promise<PlanRow[]> => {
   }));
 };
 
+/** Same lock order for all billing and capacity writers: team, subscription, payment. */
+export const lockBillingTeam = async (client: PoolClient,teamId:string):Promise<void> => {
+  const result=await client.query('SELECT id FROM teams WHERE id=$1 FOR UPDATE',[teamId]);
+  if (!result.rows.length) throw new HttpError(404,'NOT_FOUND','Team not found');
+};
+export const getPurchasablePlan=async(client:PoolClient,code:string):Promise<PlanRow> => {
+  const result=await client.query('SELECT code FROM billing_plans WHERE public_code=$1',[code]);
+  if (!result.rows.length) throw new HttpError(400,'VALIDATION_ERROR','Unknown subscription plan');
+  return getPlan(client,result.rows[0].code);
+};
+
 export const getRawSubscription = async (
   client: PoolClient,
   teamId: string
 ): Promise<SubscriptionRow> => {
   const { rows } = await client.query(
     `SELECT team_id, plan_code, seats, status, period_started_at, period_ends_at,
-            last_renewal_failed_at, grace_ends_at
+            last_renewal_failed_at, grace_ends_at, revision, scheduled_change_id
      FROM team_subscriptions WHERE team_id = $1`,
     [teamId]
   );
@@ -149,6 +179,7 @@ export const getRawSubscription = async (
     period_ends_at: r.period_ends_at,
     last_renewal_failed_at: r.last_renewal_failed_at,
     grace_ends_at: r.grace_ends_at,
+    revision:r.revision,scheduled_change_id:r.scheduled_change_id,
   };
 };
 
@@ -176,17 +207,27 @@ export const materializeSubscription = async (
   teamId: string,
   now: Date
 ): Promise<{ sub: SubscriptionRow; plan: PlanRow }> => {
-  const sub = await getRawSubscription(client, teamId);
-  const plan = await getPlan(client, sub.plan_code);
-  const next = transitionStatus(sub, now);
-  if (next.status !== sub.status) {
-    await client.query(
-      `UPDATE team_subscriptions SET status = $1, updated_at = CURRENT_TIMESTAMP
-       WHERE team_id = $2`,
-      [next.status, teamId]
-    );
+  await lockBillingTeam(client,teamId);
+  let sub=await getRawSubscription(client,teamId);
+  const baseline=await client.query("SELECT sequence FROM financial_ledger WHERE team_id=$1 AND kind='STATE' LIMIT 1",[teamId]);
+  if (!baseline.rows.length) await snapshotSubscription(client,teamId,'opening baseline');
+  if (sub.scheduled_change_id && sub.period_ends_at.getTime()<=now.getTime()) {
+    const change=await getChangeById(client,sub.scheduled_change_id);
+    if (change) {
+      const usage=await getSeatUsage(client,teamId);
+      if (usage.members+usage.pendingInvites>change.toSeats!) throw new HttpError(409,'DOWNGRADE_CAPACITY_CONFLICT','Scheduled capacity below reserved seats');
+      await applyChange(client,change);
+      await snapshotSubscription(client,teamId,'scheduled change effective');
+      sub=await getRawSubscription(client,teamId);
+    }
   }
-  return { sub: next, plan };
+  const plan=await getPlan(client,sub.plan_code);
+  const next=transitionStatus(sub,now);
+  if (next.status!==sub.status) {
+    await client.query('UPDATE team_subscriptions SET status=$1,revision=revision+1,updated_at=CURRENT_TIMESTAMP WHERE team_id=$2',[next.status,teamId]);
+    await snapshotSubscription(client,teamId,'status transition');
+  }
+  return {sub:await getRawSubscription(client,teamId),plan};
 };
 
 export const getSeatUsage = async (client: PoolClient, teamId: string): Promise<SeatUsage> => {
@@ -221,7 +262,11 @@ export const assertCanGrow = async (
     );
   }
   const usage = await getSeatUsage(client, teamId);
-  const capacity = capacityOf(sub, plan);
+  let capacity=capacityOf(sub,plan);
+  if (sub.scheduled_change_id) {
+    const scheduled=await getChangeById(client,sub.scheduled_change_id);
+    if (scheduled?.toSeats) capacity=Math.min(capacity,scheduled.toSeats);
+  }
   if (usage.members + usage.pendingInvites + extra > capacity) {
     throw new HttpError(
       403,
@@ -254,51 +299,30 @@ export const computeChange = (
   targetSeats: number,
   now: Date
 ): ComputedChange => {
-  if (targetSeats < 1) {
-    throw new HttpError(400, 'VALIDATION_ERROR', 'Seats must be a positive integer');
-  }
-  if (targetSeats > targetPlan.max_seats) {
-    throw new HttpError(
-      400,
-      'SEAT_LIMIT_EXCEEDED',
-      `This plan supports at most ${targetPlan.max_seats} seats`
-    );
-  }
-
-  const prevMonthly = monthlyAmount(currentPlan.price_per_seat_minor, sub.seats);
-  const nextMonthly = monthlyAmount(targetPlan.price_per_seat_minor, targetSeats);
-  const accrue = nextMonthly - prevMonthly;
-  const daysRemaining = daysRemainingInPeriod(sub.period_ends_at, now);
-
-  let type: SubscriptionChangeType;
-  let amountMinor: number;
-  if (accrue > 0) {
-    type =
-      targetPlan.code !== sub.plan_code
-        ? SubscriptionChangeType.PLAN_UPGRADE
-        : SubscriptionChangeType.ADD_SEATS;
-    amountMinor = proratedChargeMinor({
-      prevMonthlyMinor: prevMonthly,
-      nextMonthlyMinor: nextMonthly,
-      periodDays: billingConfig.periodDays,
-      daysRemaining,
-    });
-  } else {
-    type =
-      targetPlan.code !== sub.plan_code
-        ? SubscriptionChangeType.PLAN_DOWNGRADE
-        : SubscriptionChangeType.REDUCE_SEATS;
-    amountMinor = 0;
-  }
-
+  if (!Number.isSafeInteger(targetSeats)||targetSeats<1||targetSeats>MAX_SEATS)
+    throw new HttpError(400,'VALIDATION_ERROR','Seats must be a positive integer within the supported limit');
+  if (targetPlan.max_seats>0&&targetSeats>targetPlan.max_seats)
+    throw new HttpError(400,'SEAT_LIMIT_EXCEEDED',`This plan supports at most ${targetPlan.max_seats} seats`);
+  if (currentPlan.currency!==targetPlan.currency&&!currentPlan.is_free)
+    throw new HttpError(409,'CURRENCY_CHANGE_REQUIRES_MIGRATION','Paid subscriptions retain their currency; migration requires review');
+  const prevMonthly=planMonthlyAmount(currentPlan,sub.seats),nextMonthly=planMonthlyAmount(targetPlan,targetSeats);
+  const newPeriod=currentPlan.is_free||sub.period_ends_at.getTime()<=now.getTime();
+  const periodDays=Math.max(1,Math.ceil((sub.period_ends_at.getTime()-sub.period_started_at.getTime())/86400000));
+  const downgrade=targetPlan.code!==sub.plan_code&&!currentPlan.is_free&&
+    (targetPlan.pricing_model==='INCLUDED_SEATS'&&currentPlan.pricing_model==='INCLUDED_SEATS'
+      ?targetPlan.base_price_minor!<currentPlan.base_price_minor!:nextMonthly<prevMonthly);
+  const reduction=targetPlan.code===sub.plan_code&&targetSeats<sub.seats;
+  const scheduled=!newPeriod&&(downgrade||reduction);
+  const parts=newPeriod?{costMinor:nextMonthly,creditMinor:0,amountMinor:nextMonthly}:
+    prorationBreakdown({prevMonthlyMinor:prevMonthly,nextMonthlyMinor:nextMonthly,periodDays,
+      daysRemaining:Math.min(periodDays,daysRemainingInPeriod(sub.period_ends_at,now))});
   return {
-    type,
-    fromPlanCode: sub.plan_code,
-    toPlanCode: targetPlan.code,
-    fromSeats: sub.seats,
-    toSeats: targetSeats,
-    amountMinor,
-    requiresPayment: amountMinor > 0 && !targetPlan.is_free,
+    type:targetPlan.code!==sub.plan_code?(downgrade?SubscriptionChangeType.PLAN_DOWNGRADE:SubscriptionChangeType.PLAN_UPGRADE)
+      :reduction?SubscriptionChangeType.REDUCE_SEATS:SubscriptionChangeType.ADD_SEATS,
+    fromPlanCode:sub.plan_code,toPlanCode:targetPlan.code,fromSeats:sub.seats,toSeats:targetSeats,
+    amountMinor:scheduled?0:parts.amountMinor,requiresPayment:!scheduled&&parts.amountMinor>0&&!targetPlan.is_free,
+    currency:targetPlan.currency,costMinor:scheduled?0:parts.costMinor,creditMinor:scheduled?0:parts.creditMinor,
+    effectiveAt:scheduled?sub.period_ends_at:null,expectedRevision:sub.revision??0,startsNewPeriod:newPeriod,
   };
 };
 
@@ -306,7 +330,7 @@ export const computeRenewal = (
   sub: SubscriptionRow,
   plan: PlanRow
 ): ComputedChange => {
-  const amountMinor = monthlyAmount(plan.price_per_seat_minor, sub.seats);
+  const amountMinor = planMonthlyAmount(plan,sub.seats);
   return {
     type: SubscriptionChangeType.RENEWAL,
     fromPlanCode: plan.code,
@@ -314,7 +338,8 @@ export const computeRenewal = (
     fromSeats: sub.seats,
     toSeats: sub.seats,
     amountMinor,
-    requiresPayment: requiresPaymentFor(amountMinor, plan),
+    requiresPayment:requiresPaymentFor(amountMinor,plan),
+    currency:plan.currency,costMinor:amountMinor,creditMinor:0,expectedRevision:sub.revision??0,startsNewPeriod:true,
   };
 };
 
@@ -337,8 +362,8 @@ const changeDescription = (change: ChangeRow): string => {
 
 /**
  * Records a subscription change plus its invoice (and a PENDING payment when a
- * charge is due) in one transaction. When no payment is required the new
- * plan/seats are applied immediately.
+ * charge is due) in one transaction. Reductions are scheduled; other
+ * zero-net changes apply immediately with their offsetting ledger entries.
  */
 export const openChange = async (
   client: PoolClient,
@@ -349,12 +374,12 @@ export const openChange = async (
 ): Promise<{ change: ChangeRow; payment: PaymentRow | null }> => {
   const insertRes = await client.query(
     `INSERT INTO subscription_changes
-       (team_id, actor_id, type, from_plan_code, to_plan_code, from_seats, to_seats, amount_minor, status, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       (team_id,actor_id,type,from_plan_code,to_plan_code,from_seats,to_seats,amount_minor,status,created_at,currency,effective_at,expected_revision,quote)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
      RETURNING id, team_id as "teamId", actor_id as "actorId", type,
                from_plan_code as "fromPlanCode", to_plan_code as "toPlanCode",
                from_seats as "fromSeats", to_seats as "toSeats",
-               amount_minor as "amountMinor", status, created_at as "createdAt"`,
+               amount_minor as "amountMinor",status,created_at as "createdAt",currency,effective_at as "effectiveAt",expected_revision as "expectedRevision",quote`,
     [
       teamId,
       actorId,
@@ -367,7 +392,7 @@ export const openChange = async (
       computed.requiresPayment
         ? SubscriptionChangeStatus.PENDING_PAYMENT
         : SubscriptionChangeStatus.PAID,
-      now,
+      now,computed.currency??billingConfig.currency,computed.effectiveAt??null,computed.expectedRevision??null,JSON.stringify(computed),
     ]
   );
   const change = insertRes.rows[0] as ChangeRow;
@@ -387,9 +412,19 @@ export const openChange = async (
 
   let payment: PaymentRow | null = null;
   if (computed.requiresPayment) {
-    payment = await insertPayment(client, teamId, change.id, computed.amountMinor, now);
+    payment = await insertPayment(client, teamId, change.id, computed.amountMinor,now,computed.currency??billingConfig.currency);
   } else {
-    await applyChange(client, change);
+    // Even a zero-net change can exchange earned service and unused-time credit.
+    if (!computed.effectiveAt) {
+      if (computed.costMinor) await appendLedger(client, {teamId,eventKey:`change-charge:${change.id}`,kind:'CHARGE',amountMinor:computed.costMinor,currency:computed.currency!,detail:{changeId:change.id}});
+      if (computed.creditMinor) await appendLedger(client, {teamId,eventKey:`change-credit:${change.id}`,kind:'CREDIT',amountMinor:computed.creditMinor,currency:computed.currency!,detail:{changeId:change.id,reason:'unused time'}});
+    }
+    if (computed.effectiveAt) {
+      await client.query('UPDATE team_subscriptions SET scheduled_change_id=$1,revision=revision+1,updated_at=CURRENT_TIMESTAMP WHERE team_id=$2',[change.id,teamId]);
+    } else if (computed.startsNewPeriod||computed.type===SubscriptionChangeType.RENEWAL) {
+      await applyRenewal(client,change,now);
+    } else { await applyChange(client,change); }
+    await snapshotSubscription(client,teamId,computed.effectiveAt?'change scheduled':'change applied');
     await client.query(
       'UPDATE billing_invoices SET status = $1, paid_at = CURRENT_TIMESTAMP WHERE change_id = $2',
       [InvoiceStatus.PAID, change.id]
@@ -416,7 +451,8 @@ const insertPayment = async (
   teamId: string,
   changeId: string,
   amountMinor: number,
-  now: Date
+  now: Date,
+  currency: string
 ): Promise<PaymentRow> => {
   const res = await client.query(
     `INSERT INTO payment_transactions
@@ -425,7 +461,7 @@ const insertPayment = async (
      RETURNING id, team_id as "teamId", change_id as "changeId", tx_ref as "txRef",
                flw_transaction_id as "flwTransactionId", amount_minor as "amountMinor",
                currency, status, created_at as "createdAt"`,
-    [teamId, changeId, generateTxRef(), amountMinor, billingConfig.currency, PaymentStatus.PENDING, now]
+    [teamId, changeId, generateTxRef(),amountMinor,currency,PaymentStatus.PENDING, now]
   );
   return res.rows[0] as PaymentRow;
 };
@@ -435,7 +471,7 @@ const applyChange = async (client: PoolClient, change: ChangeRow): Promise<void>
   await client.query(
     `UPDATE team_subscriptions
      SET plan_code = $1, seats = $2, status = $3,
-         last_renewal_failed_at = NULL, grace_ends_at = NULL,
+         last_renewal_failed_at=NULL,grace_ends_at=NULL,scheduled_change_id=NULL,revision=revision+1,
          updated_at = CURRENT_TIMESTAMP
      WHERE team_id = $4`,
     [change.toPlanCode, change.toSeats, SubscriptionStatus.ACTIVE, change.teamId]
@@ -448,7 +484,7 @@ const applyRenewal = async (client: PoolClient, change: ChangeRow, now: Date): P
     `UPDATE team_subscriptions
      SET plan_code = $1, seats = $2, status = $3,
          period_started_at = $4, period_ends_at = $5,
-         last_renewal_failed_at = NULL, grace_ends_at = NULL,
+         last_renewal_failed_at=NULL,grace_ends_at=NULL,scheduled_change_id=NULL,revision=revision+1,
          updated_at = CURRENT_TIMESTAMP
      WHERE team_id = $6`,
     [
@@ -466,7 +502,7 @@ export interface GatewayVerification {
   transactionId: string;
   txRef: string;
   /** Amount reported by the gateway, in the currency's major unit. */
-  amountMajor: number;
+  amountMajor: number | string;
   currency: string;
   status: string;
 }
@@ -489,11 +525,12 @@ export const reconcilePayment = async (
   gateway: GatewayVerification,
   now: Date
 ): Promise<ReconcileResult> => {
+  await lockBillingTeam(client,teamId);
   const payRes = await client.query(
     `SELECT id, team_id as "teamId", change_id as "changeId", tx_ref as "txRef",
             flw_transaction_id as "flwTransactionId", amount_minor as "amountMinor",
             currency, status, created_at as "createdAt"
-     FROM payment_transactions WHERE team_id = $1 AND tx_ref = $2`,
+     FROM payment_transactions WHERE team_id=$1 AND tx_ref=$2 FOR UPDATE`,
     [teamId, txRef]
   );
   if (payRes.rows.length === 0) {
@@ -509,19 +546,16 @@ export const reconcilePayment = async (
     ? await getChangeById(client, payment.changeId)
     : null;
 
-  if (gateway.txRef && gateway.txRef !== payment.txRef) {
+  if (gateway.txRef !== payment.txRef) {
     throw new HttpError(400, 'PAYMENT_MISMATCH', 'Transaction reference does not match');
   }
-  if (gateway.currency.toUpperCase().trim() !== billingConfig.currency.toUpperCase().trim()) {
+  if (gateway.currency.toUpperCase().trim() !== payment.currency.toUpperCase().trim()) {
     throw new HttpError(400, 'PAYMENT_MISMATCH', 'Payment currency does not match the subscription');
   }
-  const expectedMajor = Math.round(payment.amountMinor / billingConfig.minorUnitsPerMajor);
-  if (
-    !Number.isFinite(gateway.amountMajor) ||
-    Math.abs(gateway.amountMajor - expectedMajor) > 0.5 / billingConfig.minorUnitsPerMajor
-  ) {
-    throw new HttpError(400, 'PAYMENT_MISMATCH', 'Payment amount does not match the expected amount');
-  }
+  let verifiedMinor:number;
+  try { verifiedMinor=majorToMinor(gateway.amountMajor); } catch { throw new HttpError(400,'PAYMENT_MISMATCH','Invalid gateway amount'); }
+  const legacyRounded=change?.quote==null&&payment.currency==='NGN'&&verifiedMinor===Math.round(payment.amountMinor/100)*100;
+  if(verifiedMinor!==payment.amountMinor&&!legacyRounded) throw new HttpError(400,'PAYMENT_MISMATCH','Payment amount does not match');
   if (payment.flwTransactionId && payment.flwTransactionId !== gateway.transactionId) {
     throw new HttpError(400, 'PAYMENT_MISMATCH', 'Payment was already linked to another transaction');
   }
@@ -560,13 +594,14 @@ export const reconcilePayment = async (
     const currentSub = await getRawSubscription(client, teamId);
     if (
       change?.type === SubscriptionChangeType.RENEWAL &&
-      currentSub.status === SubscriptionStatus.ACTIVE
+      currentSub.status === SubscriptionStatus.ACTIVE &&
+      (change.expectedRevision == null || change.expectedRevision === currentSub.revision)
     ) {
       await client.query(
         `UPDATE team_subscriptions
          SET last_renewal_failed_at = CURRENT_TIMESTAMP,
              grace_ends_at = $1,
-             status = $2,
+             status=$2,revision=revision+1,
              updated_at = CURRENT_TIMESTAMP
          WHERE team_id = $3`,
         [
@@ -576,41 +611,27 @@ export const reconcilePayment = async (
         ]
       );
     }
-    return { outcome: 'FAILED', payment: settledPayment, change };
+    if(change?.type===SubscriptionChangeType.RENEWAL&&currentSub.status===SubscriptionStatus.ACTIVE&&(change.expectedRevision==null||change.expectedRevision===currentSub.revision)) await snapshotSubscription(client,teamId,'renewal failed');
+    return { outcome: 'FAILED',payment:settledPayment,change };
   }
 
   if (change) {
-    // Check if a newer subscription change was already paid and applied to team_subscriptions:
-    const newerApplied = await client.query(
-      `SELECT id FROM subscription_changes
-       WHERE team_id = $1
-         AND status = $2
-         AND (created_at > $3 OR (created_at = $3 AND id != $4))
-       UNION
-       SELECT id FROM payment_transactions
-       WHERE team_id = $1
-         AND status = $5
-         AND (created_at > $6 OR (created_at = $6 AND id != $7))
-       LIMIT 1`,
-      [
-        teamId,
-        SubscriptionChangeStatus.PAID,
-        change.createdAt,
-        change.id,
-        PaymentStatus.SUCCESSFUL,
-        payment.createdAt,
-        payment.id,
-      ]
-    );
-
-    const isSuperseded = newerApplied.rows.length > 0;
-
+    const current=await getRawSubscription(client,teamId);
+    const currentPlan=await getPlan(client,current.plan_code);
+    const newer=change.expectedRevision==null?await client.query(
+      "SELECT id FROM subscription_changes WHERE team_id=$1 AND status='PAID' AND created_at>$2 LIMIT 1",[teamId,change.createdAt]):null;
+    const isSuperseded=(change.expectedRevision!=null&&change.expectedRevision!==current.revision)||payment.currency!==currentPlan.currency&&!currentPlan.is_free||Boolean(newer?.rows.length);
+    const quote=change.quote;
+    await appendLedger(client,{teamId,eventKey:`charge:${payment.id}`,kind:'CHARGE',amountMinor:quote?.costMinor??verifiedMinor,currency:payment.currency,paymentId:payment.id,detail:{txRef:payment.txRef,receivedMinor:verifiedMinor}});
+    if (quote?.creditMinor) await appendLedger(client,{teamId,eventKey:`proration-credit:${payment.id}`,kind:'CREDIT',amountMinor:quote.creditMinor,currency:payment.currency,paymentId:payment.id,detail:{reason:'unused time'}});
     if (!isSuperseded) {
-      if (change.type === SubscriptionChangeType.RENEWAL) {
-        await applyRenewal(client, change, now);
-      } else {
-        await applyChange(client, change);
-      }
+      const usage=await getSeatUsage(client,teamId);
+      if (change.toSeats!<usage.members+usage.pendingInvites) throw new HttpError(409,'SEAT_LIMIT_EXCEEDED','Reserved seats exceed checkout');
+      if (change.type===SubscriptionChangeType.RENEWAL||quote?.startsNewPeriod) await applyRenewal(client,change,now);
+      else await applyChange(client,change);
+      await snapshotSubscription(client,teamId,'payment settled');
+    } else {
+      await appendLedger(client,{teamId,eventKey:`superseded-credit:${payment.id}`,kind:'CREDIT',amountMinor:verifiedMinor,currency:payment.currency,paymentId:payment.id,detail:{reason:'superseded change; manual credit resolution required'}});
     }
 
     await client.query('UPDATE subscription_changes SET status = $1 WHERE id = $2', [
@@ -690,7 +711,7 @@ export const getChangeById = async (
     `SELECT id, team_id as "teamId", actor_id as "actorId", type,
             from_plan_code as "fromPlanCode", to_plan_code as "toPlanCode",
             from_seats as "fromSeats", to_seats as "toSeats",
-            amount_minor as "amountMinor", status, created_at as "createdAt"
+            amount_minor as "amountMinor",status,created_at as "createdAt",currency,effective_at as "effectiveAt",expected_revision as "expectedRevision",quote
      FROM subscription_changes WHERE id = $1`,
     [changeId]
   );
@@ -707,6 +728,7 @@ export const getChangeById = async (
     toSeats: r.toSeats,
     amountMinor: r.amountMinor,
     status: r.status,
-    createdAt: r.createdAt,
+    createdAt:r.createdAt,
+    currency:r.currency,effectiveAt:r.effectiveAt,expectedRevision:r.expectedRevision,quote:r.quote,
   };
 };
