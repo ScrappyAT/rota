@@ -1,4 +1,7 @@
-import { Router, Response } from 'express';
+import { Router } from 'express';
+import { z } from 'zod';
+import { initiateBilling } from '../billing/initiation';
+import { reconstructBilling } from '../billing/ledger';
 import { pool } from '../db';
 import { AuthRequest } from '../middleware/auth';
 import { requireRole } from '../middleware/tenant';
@@ -17,15 +20,12 @@ import {
   materializeSubscription,
   getSeatUsage,
   capacityOf,
-  getPlan,
-  computeChange,
-  computeRenewal,
-  openChange,
   reconcilePayment,
   cleanupStalePendingPayments,
 } from '../billing/service';
-import { initializeCheckout, verifyTransaction } from '../billing/flutterwave';
+import { verifyTransaction } from '../billing/flutterwave';
 import { env } from '../env';
+import { planMonthlyAmount } from '../billing/proration';
 
 const router = Router({ mergeParams: true });
 
@@ -81,7 +81,9 @@ router.get('/', async (req: AuthRequest, res, next) => {
         data: {
           subscription: {
             teamId: sub.team_id,
-            planCode: sub.plan_code,
+            planCode:plan.public_code??sub.plan_code,
+            currency:plan.currency,monthlyPriceMinor:planMonthlyAmount(plan,sub.seats),basePriceMinor:plan.base_price_minor,includedSeats:plan.included_seats,extraSeatMinor:plan.extra_seat_minor,
+            scheduledChangeId:sub.scheduled_change_id,
             seats: sub.seats,
             status: sub.status,
             periodStartedAt: sub.period_started_at,
@@ -119,7 +121,7 @@ router.get('/plans', async (req: AuthRequest, res, next) => {
       await client.query('BEGIN');
       const plans = await listPlans(client);
       await client.query('COMMIT');
-      res.json({ success: true, data: plans });
+      res.json({success:true,data:plans.map(p=>({...p,code:p.public_code??p.code,basePriceMinor:p.base_price_minor,includedSeats:p.included_seats,extraSeatMinor:p.extra_seat_minor}))});
     } catch (e) {
       await client.query('ROLLBACK');
       throw e;
@@ -151,148 +153,24 @@ const redirectUrlFor = (req: AuthRequest, returnUrl?: string): string => {
   return base;
 };
 
-const sendChangeResult = async (
-  req: AuthRequest,
-  res: Response,
-  teamId: string,
-  actorId: string,
-  computed: ReturnType<typeof computeChange>,
-  returnUrl?: string
-) => {
-  const client = await pool.connect();
-  let checkoutUrl: string | null = null;
-  try {
-    await client.query('BEGIN');
-    const now = new Date();
-    const { change, payment } = await openChange(client, teamId, actorId, computed, now);
-    await client.query('COMMIT');
-
-    if (computed.requiresPayment && payment) {
-      const init = await initializeCheckout({
-        txRef: payment.txRef,
-        amountMinor: payment.amountMinor,
-        currency: payment.currency,
-        redirectUrl: redirectUrlFor(req, returnUrl),
-        customer: { email: req.user!.email },
-      });
-      checkoutUrl = init.link;
-    }
-
-    res.status(computed.requiresPayment ? 201 : 200).json({
-      success: true,
-      data: {
-        change,
-        payment: payment
-          ? {
-              id: payment.id,
-              txRef: payment.txRef,
-              amountMinor: payment.amountMinor,
-              currency: payment.currency,
-              status: payment.status,
-            }
-          : null,
-        checkoutUrl,
-      },
-    });
-  } catch (e) {
-    await client.query('ROLLBACK').catch(() => {});
-    throw e;
-  } finally {
-    client.release();
-  }
-};
-
-// Change plan (and optionally seats). Upgrades charge a prorated amount;
-// downgrades apply immediately at no charge.
-router.post('/checkout', async (req: AuthRequest, res, next) => {
-  try {
-    const teamId = uuidParam(req.params.teamId, 'teamId');
-    const data = CreateCheckoutSchema.parse(req.body);
-
-    const client = await pool.connect();
+const RenewalSchema=z.object({returnUrl:z.string().optional()});
+for (const operation of ['checkout','seats','renew'] as const) {
+  router.post('/'+operation,async(req:AuthRequest,res,next)=>{
     try {
-      await client.query('BEGIN');
-      const now = new Date();
-      const { sub, plan } = await materializeSubscription(client, teamId, now);
-      const usage = await getSeatUsage(client, teamId);
-      const targetSeats = data.seats ?? sub.seats;
-      if (targetSeats < usage.members) {
-        throw new HttpError(
-          400,
-          'SEAT_LIMIT_EXCEEDED',
-          'Seats cannot be lower than the current number of members'
-        );
-      }
-      const targetPlan = await getPlan(client, data.planCode);
-      const computed = computeChange(sub, plan, targetPlan, targetSeats, now);
-      await client.query('COMMIT');
-      await sendChangeResult(req, res, teamId, req.user!.id, computed, data.returnUrl);
-    } catch (e) {
-      await client.query('ROLLBACK');
-      throw e;
-    } finally {
-      client.release();
-    }
-  } catch (error) {
-    next(error);
-  }
-});
+      const data=operation==='checkout'?CreateCheckoutSchema.parse(req.body):operation==='seats'?UpdateSeatsSchema.parse(req.body):RenewalSchema.parse(req.body??{});
+      const input=data as {planCode?:string;seats?:number;returnUrl?:string};
+      const result=await initiateBilling(pool,{...input,operation,teamId:uuidParam(req.params.teamId,'teamId'),actorId:req.user!.id,
+        email:req.user!.email,key:req.get('Idempotency-Key')??'',redirectUrl:redirectUrlFor(req,input.returnUrl)});
+      res.status(result.status).json(result.body);
+    } catch(error){next(error);}
+  });
+}
 
-// Add or reduce seats (same plan)
-router.post('/seats', async (req: AuthRequest, res, next) => {
+router.get('/ledger/reconstruction',async(req:AuthRequest,res,next)=>{
+  const client=await pool.connect();
   try {
-    const teamId = uuidParam(req.params.teamId, 'teamId');
-    const data = UpdateSeatsSchema.parse(req.body);
-
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const now = new Date();
-      const { sub, plan } = await materializeSubscription(client, teamId, now);
-      const usage = await getSeatUsage(client, teamId);
-      if (data.seats < usage.members) {
-        throw new HttpError(
-          400,
-          'SEAT_LIMIT_EXCEEDED',
-          'Seats cannot be lower than the current number of members'
-        );
-      }
-      const computed = computeChange(sub, plan, plan, data.seats, now);
-      await client.query('COMMIT');
-      await sendChangeResult(req, res, teamId, req.user!.id, computed, data.returnUrl);
-    } catch (e) {
-      await client.query('ROLLBACK');
-      throw e;
-    } finally {
-      client.release();
-    }
-  } catch (error) {
-    next(error);
-  }
-});
-
-// Renew the current subscription for another period
-router.post('/renew', async (req: AuthRequest, res, next) => {
-  try {
-    const teamId = uuidParam(req.params.teamId, 'teamId');
-    const returnUrl = typeof req.body?.returnUrl === 'string' ? req.body.returnUrl : undefined;
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const now = new Date();
-      const { sub, plan } = await materializeSubscription(client, teamId, now);
-      const computed = computeRenewal(sub, plan);
-      await client.query('COMMIT');
-      await sendChangeResult(req, res, teamId, req.user!.id, computed, returnUrl);
-    } catch (e) {
-      await client.query('ROLLBACK');
-      throw e;
-    } finally {
-      client.release();
-    }
-  } catch (error) {
-    next(error);
-  }
+    res.json({success:true,data:await reconstructBilling(client,uuidParam(req.params.teamId,'teamId'))});
+  } catch(error){next(error);} finally{client.release();}
 });
 
 // Server-side payment verification (called after the hosted checkout redirect)
@@ -370,7 +248,7 @@ router.get('/changes', async (req: AuthRequest, res, next) => {
       `SELECT id, team_id as "teamId", actor_id as "actorId", type,
               from_plan_code as "fromPlanCode", to_plan_code as "toPlanCode",
               from_seats as "fromSeats", to_seats as "toSeats",
-              amount_minor as "amountMinor", status, created_at as "createdAt"
+              amount_minor as "amountMinor",status,created_at as "createdAt",currency,effective_at as "effectiveAt"
        FROM subscription_changes
        WHERE ${conditions.join(' AND ')}
        ORDER BY created_at DESC, id DESC
@@ -407,7 +285,7 @@ router.get('/billing', async (req: AuthRequest, res, next) => {
 
     const { rows } = await pool.query(
       `SELECT i.id, i.team_id as "teamId", i.change_id as "changeId",
-              i.amount_minor as "amountMinor", i.description, i.status,
+              i.amount_minor as "amountMinor",i.description,i.status,COALESCE(pt.currency,sc.currency,'NGN') as currency,
               i.created_at as "createdAt", i.paid_at as "paidAt",
               sc.type as "changeType", pt.tx_ref as "txRef"
        FROM billing_invoices i

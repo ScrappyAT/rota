@@ -11,10 +11,10 @@ clinics, retail). Teams have owners, managers, and staff. Owners and managers
 create shifts and invite members; staff view and swap shifts. The product is
 delivered as an Expo mobile app backed by an Express API.
 
-Current state: Phase 2 (auth, teams, invitations, role-based access control) is
-implemented and validated. Shifts, swaps, and the activity feed are Phase 3 and
-are **not implemented yet**. Track everything in
-`docs/IMPLEMENTATION-STATUS.md`.
+Current state: auth, teams, shifts, swaps, activity, push, caching and sharding
+exist. Milestone R1 corrects financial behavior only; see
+`docs/R1-IMPLEMENTATION-REPORT.md` and `docs/IMPLEMENTATION-STATUS.md`.
+R2, R3 and R4 remain outside the authorized correction scope.
 
 ## Technology Stack
 
@@ -120,6 +120,19 @@ These are non-negotiable. Any endpoint touching team data must satisfy them:
   runtime behavior was verified unless the app was actually run.
 - New features require tests covering: the happy path, a cross-tenant denial
   (403/404), and an invalid-input denial (400).
+
+## R1 financial correction rules
+
+- `npm run test:r1` uses only the named disposable R1 services on ports
+  5540 (PostgreSQL), 6480 (Redis), 5541/5542 (shards), with dummy provider
+  keys and local non-serving HTTP endpoints. Setup is in `docs/BILLING.md`.
+- Never run destructive integration tests against production or the normal
+  development database for a financial review. Keep Jest serial.
+- Migration 007 adds versioned USD plans; keep legacy NGN prices and records.
+  Do not reinterpret old `STARTER` references as `STARTER_USD_V1`.
+- All new checkout/seats/renew calls require a client UUID Idempotency-Key.
+- Financial ledger entries are append-only. Corrections require new entries.
+- R1 has no authorization for real payments, deployment, commits or pushes.
 
 ## Documentation Requirements
 

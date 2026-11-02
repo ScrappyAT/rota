@@ -10,7 +10,8 @@ Status categories:
 - **Not started**
 - **Blocked** — cannot proceed until a listed dependency is resolved.
 
-Last full validation: 2026-10-13 (see "Validation history").
+Last financial correction validation: 2026-10-30; see Milestone R1 below.
+Earlier phase tables and validation history retain their original audit context.
 
 ---
 
@@ -192,3 +193,35 @@ run and remains as a historical record).
 **Not verified:** mobile runtime behavior. The Expo app was type-checked but
 never launched on this machine; every mobile item marked
 "Implemented, not independently verified" carries that caveat.
+
+
+## Milestone R1 - Billing and Financial Integrity (2026-10-30)
+
+Approved implementation scope: R1 only. Branch: `codex/r1-billing-financial-integrity`.
+No commit, push, merge or deployment. Source: original assignment PDF, Part 2
+Task A, page 19. `BILLING.md` now supersedes historical Phase 4 financial rules.
+
+| Requirement | Status | Evidence |
+|---|---|---|
+| Exact Starter/Team/Business USD prices and allowances | Completed & verified | Additive migration 007, `planMonthlyAmount`; catalog/included/extras tests |
+| Separate-floor proration | Completed & verified | `prorationBreakdown`; 8+ calculation scenarios and real-DB ledger amounts |
+| End-period plan/seat reductions | Completed & verified | `computeChange`, `materializeSubscription`; before/after boundary and pending-seat tests |
+| Currency precision and legacy NGN retention | Completed & verified against mocked provider | Actual adapter unit tests; legacy pending settlement and pre-R1 database preservation test |
+| Concurrent seat reservations/acceptance | Completed & verified | Team row locks; duplicate acceptance, final seat, resend and downgrade/invite races |
+| Client/server payment idempotency | Completed & verified for shared logic/API | Persisted client intent keys, duplicate requests, lost response, conflict and provider-call counts |
+| Append-only financial ledger and reconstruction | Completed & verified | Mutation rejection, duplicate event conflict, projection corruption/rebuild, schedule/totals and refund races |
+| Mobile R1 integration | Implemented, not independently verified on device | Shared intent logic unit-tested; mobile TypeScript/lint pass; new expo-crypto requires native rebuild |
+
+Final gates: 22 suites / 278 tests passed; typecheck and API/shared builds passed;
+lint passed with zero errors and five pre-existing warnings. Mobile test script
+is still a stub; no device runtime validation is claimed.
+All database tests use isolated services on 5540/6480/5541/5542, with mocked
+financial providers. Normal development databases and production records are
+untouched. Migration 001-006 files are unchanged. The migration preservation
+suite verifies original prices/subscription/payment/invoice values survive 007.
+
+Remaining boundaries: existing paid NGN subscriptions need a separately reviewed
+currency transition; ambiguous checkout initialization has no automatic recovery;
+scheduled changes use existing lazy materialization; refunds are accounting-only,
+not a new provider refund feature. Live checkout/device runtime, durable jobs and
+R2-R4 were not performed. Details: `R1-IMPLEMENTATION-REPORT.md`.

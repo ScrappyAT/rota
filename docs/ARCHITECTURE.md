@@ -139,7 +139,11 @@ Shifts and swap writes call `services/notifications` which writes a
 `notifications` row (deduped by a deterministic `event_key`) and forwards to
 the Expo push service for users with a registered device and the event enabled.
 
-## Billing & Subscriptions (Phase 4)
+## Billing & Subscriptions (Phase 4; superseded financial rules)
+
+The endpoint list below describes the original Phase 4 contract. R1 amendments
+are authoritative for current billing behavior; see the following R1 section
+and `BILLING.md`.
 
 Billing is nested under `/teams/:teamId/subscription`, **OWNER only**
 (except the public `/billing` routes below). Design and money model in
@@ -213,3 +217,27 @@ inside the transaction. See `docs/SECURITY.md`.
 - Packaging, Railway runbook, and env reference: `docs/DEPLOYMENT.md`.
 - k6 load-testing harness, thresholds, and runbook: `docs/PERFORMANCE-TESTING.md`.
 - Graduation close-out checklist: `docs/SUBMISSION.md`.
+
+## Milestone R1 financial contract
+
+- New paid catalog: Starter USD20/5 seats, Team USD50/15 + USD3 extra,
+  Business USD120/40 + USD2 extra. Versioned IDs preserve historical NGN rows.
+- `POST /teams/:teamId/subscription/{checkout,seats,renew}` requires UUID
+  `Idempotency-Key`. `initiation.ts` commits a deduplication reservation and
+  payment intent before an at-most-once provider call, returning 200/201/202.
+- Proration separately floors unused old service and remaining new service.
+  Plan downgrades/seat reductions are scheduled for period end; target capacity
+  includes pending invitations. Team row locks serialize capacity writers.
+- `ledger.ts` posts immutable charges/credits/refunds and subscription snapshots.
+  Owner-only `GET /teams/:teamId/subscription/ledger/reconstruction` returns
+  subscription state, scheduled change and per-currency totals from the ledger.
+- Migration 007 adds plan pricing fields, revision/schedule/quote metadata,
+  `billing_idempotency`, and append-only `financial_ledger`; 001-006 are unchanged.
+- Gateway decimal strings preserve cents; settlement compares each payment's
+  currency and amount. Revision checks fence late settlements and failures.
+- Shared `PaymentAttempts` is used by mobile with persisted intent keys and
+  `expo-crypto`. Existing authentication and API envelopes remain in place.
+- Tests use `scripts/test-r1.ps1` with isolated main/shard/Redis services.
+  No normal development/production database or provider is used.
+- Durable jobs, settings, rate-limiter redesign, deployment and R2-R4 are
+  outside this milestone. See `R1-IMPLEMENTATION-REPORT.md` for evidence.

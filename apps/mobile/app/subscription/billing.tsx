@@ -57,7 +57,7 @@ export default function BillingHistoryScreen() {
           <View key={change.id} style={styles.card}>
             <View style={styles.cardHeader}>
               <Text style={styles.primary}>{change.type}</Text>
-              <Text style={styles.muted}>{formatMoney(change.amountMinor)}</Text>
+              <Text style={styles.muted}>{formatMoney(change.amountMinor,change.currency??'NGN')}</Text>
             </View>
             <Text style={styles.muted}>
               {change.fromPlanCode ?? '—'} → {change.toPlanCode ?? '—'} · seats {change.fromSeats ?? '—'} → {change.toSeats ?? '—'} · {change.status}
@@ -76,7 +76,7 @@ export default function BillingHistoryScreen() {
           <View key={invoice.id} style={styles.card}>
             <View style={styles.cardHeader}>
               <Text style={styles.primary}>{invoice.description}</Text>
-              <Text style={styles.muted}>{formatMoney(invoice.amountMinor)}</Text>
+              <Text style={styles.muted}>{formatMoney(invoice.amountMinor,invoice.currency??'NGN')}</Text>
             </View>
             <Text style={styles.muted}>Status: {invoice.status}</Text>
             <Text style={styles.time}>{formatDateTime(invoice.createdAt)}</Text>

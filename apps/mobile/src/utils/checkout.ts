@@ -1,6 +1,6 @@
 import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
-import { fetchPaymentStatus, verifyPayment } from '../api/billing';
+import { fetchPaymentStatus, verifyPayment, finishPaymentAttempts } from '../api/billing';
 
 export interface CheckoutReturn {
   txRef?: string;
@@ -125,13 +125,15 @@ export async function openCheckout(
   const activeVerifier = verifier ?? { verifyPayment, fetchPaymentStatus };
   try {
     const result = await WebBrowser.openAuthSessionAsync(checkoutUrl, returnUrl);
-    return await reconcileCheckoutSession(teamId, result, expectedTxRef, activeVerifier);
+    const outcome=await reconcileCheckoutSession(teamId,result,expectedTxRef,activeVerifier);
+    if(outcome!=='pending') await finishPaymentAttempts(teamId,expectedTxRef);
+    return outcome;
   } catch {
     if (expectedTxRef) {
       try {
         const payment = await activeVerifier.fetchPaymentStatus(teamId, expectedTxRef);
-        if (payment.status === 'SUCCESSFUL') return 'settled';
-        if (payment.status === 'FAILED') return 'failed';
+        if(payment.status==='SUCCESSFUL'){await finishPaymentAttempts(teamId,expectedTxRef);return 'settled';}
+        if(payment.status==='FAILED'){await finishPaymentAttempts(teamId,expectedTxRef);return 'failed';}
       } catch {
         // Inconclusive
       }

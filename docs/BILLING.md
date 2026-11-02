@@ -1,189 +1,168 @@
-# Billing — Seat-Based Subscriptions (Phase 4)
+# Billing - Milestone R1
 
-Phase 4 adds seat-based, recurring subscriptions billed per team through the
-Flutterwave gateway (NGN). This document describes the implemented behavior.
-Test evidence: `docs/PHASE-4-TEST-REPORT.md`.
+The original Final Graduation Task PDF, Part 2 Task A (pricing/proration on
+page 19), governs the new catalog. This document supersedes the old Phase 4
+pricing description; historical Phase 4 test reports remain historical evidence.
+See `R1-IMPLEMENTATION-REPORT.md` for executed validation and limitations.
 
-## Overview
+## Catalog and compatibility
 
-- Every team has exactly one row in `team_subscriptions`; it is created on team
-  creation (`FREE` plan, active, seats = `GREATEST(1, memberCount)`, one
-  `BILLING_PERIOD_DAYS` period).
-- Plans are stored in `billing_plans`. The system ships four seeded plans, all
-  priced per seat per month.
-- On a paid plan, `seats` is the number of seats the owner purchased.
-  `FREE` seats are capped by the plan's `max_seats` (100) regardless of the
-  stored value.
-- Effective seat capacity: `plan.max_seats` on FREE, otherwise `subscription.seats`.
-- Usage = current members + unexpired pending invitations. Adding members or
-  new invites is blocked when that total would exceed capacity.
+| Public plan | Monthly base (USD cents) | Included seats | Each additional seat |
+|---|---:|---:|---:|
+| Starter | 2000 ($20) | 5 | Unavailable; hard cap 5 |
+| Team | 5000 ($50) | 15 | 300 ($3) |
+| Business | 12000 ($120) | 40 | 200 ($2) |
 
-## Money model
+Monthly charge = base + max(0, purchased seats - included seats) * extra rate.
+The API normalizes a requested count below the allowance to the included count.
+Owners and managers consume seats too; valid pending invitations reserve seats.
+Team/Business have no commercial extra-seat cap; the API has a 100,000-seat
+input safety bound. Starter rejects a sixth seat.
 
-- All money is stored and computed as **integer minor units** (kobo).
-  `billing_plans.price_per_seat_minor` is kobo per seat per month.
-- Flutterwave's hosted checkout and verify responses report amounts in the
-  currency's **major unit** (naira). The client converts minor → major on the
-  way out (`amountMinor / minorUnitsPerMajor`, 100) and back on the way in.
-- Verification tolerance: expected major = `round(amountMinor / 100)`; a match
-  within `0.5 / 100` is accepted (guards against float drift).
-- Formatting helpers: `apps/api/src/billing/proration.ts`
-  (`monthlyAmount`, `proratedChargeMinor`, `daysRemainingInPeriod`, `addDays`).
+Migration `007_billing_financial_integrity.sql` adds the internal plan IDs
+`STARTER_USD_V1`, `TEAM_USD_V1`, `BUSINESS_USD_V1` with public codes STARTER,
+TEAM, BUSINESS. Existing FREE/STARTER/GROWTH/SCALE rows and financial values
+are retained. Existing paid NGN subscriptions can renew/change seats using
+their original plan; a paid NGN-to-USD checkout returns
+`409 CURRENCY_CHANGE_REQUIRES_MIGRATION`. No exchange rate is invented. FREE
+teams can buy a USD plan for a full new paid period without NGN credit.
+`BILLING_CURRENCY=NGN` remains the legacy fallback; new quotes use plan currency.
 
-### Proration
+## Exact calculations
 
-- `monthly = pricePerSeatMinor * seats`.
-- Upgrade or seat-adding charge =
-  `round((newMonthly − oldMonthly) × daysRemaining / periodDays)`, clamped to 0.
-- Downgrades and seat reductions charge nothing, apply immediately, and
-  refund nothing (credit toward the next period is not credited — documented
-  limitation).
-- `daysRemainingInPeriod` is whole days (ceil), clamped to 0 after the period
-  end (materialization flips an overdue active subscription to `EXPIRED` first).
+All persisted/calculated amounts are integer minor units. Let O and N be old
+and new monthly amounts, D be the period length in days, and R be remaining
+days (ceil, clamped to the actual period length).
 
-## Subscription status lifecycle
+- unused credit = floor(O * R / D)
+- remaining new cost = floor(N * R / D)
+- payment due = max(0, remaining new cost - unused credit)
 
-- `ACTIVE` — normal operation. Lapses to `EXPIRED` automatically once
-  `period_ends_at <= now` (lazy materialization).
-- `PAST_DUE` — a **renewal payment failed** while the subscription was still
-  `ACTIVE`. Opens a `SUBSCRIPTION_GRACE_DAYS` grace window
-  (`grace_ends_at = now + graceDays`).
-- `EXPIRED` — grace window elapsed (`PAST_DUE` + `grace_ends_at <= now`) or a
-  period ended with no active renewal. Blocks adding members/invites and
-  creating shifts.
-- `CANCELLED` — reserved for a future termination flow (not reachable yet).
+The two products are independently divided using BigInt integer arithmetic.
+Do not round the net difference. A newly paid or expired subscription pays a
+full new period; renewal pays the full current monthly amount.
 
-Transitions are lazy: `materializeSubscription(client, teamId, now)` computes
-the transition and persists it before any billing operation reads the row.
-`transitionStatus` is a pure function so the floor is unit-tested.
+Worked examples (30-day periods):
 
-### Enforcements
+| Case | Credit | Cost | Due |
+|---|---:|---:|---:|
+| Starter -> Team, 20 days left | floor(2000*20/30)=1333 | floor(5000*20/30)=3333 | 2000 ($20) |
+| Team 15 -> 18 seats, 12 days left | 2000 | 2360 | 360 ($3.60) |
+| Starter -> Business, 1 day left | 66 | 400 | 334 ($3.34) |
+| Team -> Business, 10 days left, after an earlier upgrade | 1666 | 4000 | 2334 ($23.34) |
+| Renew Team with 18 seats | 0 | 5900 | 5900 ($59) |
 
-- `assertCanGrow(client, teamId, now, extra)` — invitation create
-  (`POST /invitations/team/:teamId`): requires `ACTIVE`, else 403
-  `SUBSCRIPTION_REQUIRED`; reserves capacity so pending invites count against
-  seats (`members + pending + extra > capacity` → 403 `SEAT_LIMIT_EXCEEDED`).
-- `assertSubscriptionActive(client, teamId, now)` — shift create
-  (`POST /teams/:teamId/shifts`): requires `ACTIVE` (403
-  `SUBSCRIPTION_REQUIRED`). Seats themselves are not consumed by shift writes.
-- Seat edits (`POST /seats`) reject setting seats below the current member
-  count (400 `SEAT_LIMIT_EXCEEDED`).
+Adapter conversion uses decimal strings (10067 -> "100.67"). Verification
+parses at most two decimal places exactly and compares both currency and minor
+amount to the payment itself. No new-payment tolerance or whole-dollar rounding
+is used. Only pre-R1 NGN pending payments with no saved quote may match the
+old adapter's exact whole-naira rounded value. Their original rows are unchanged;
+the new ledger records the actual verified amount.
 
-## Change lifecycle
+## Downgrades and seats
 
-A change is one of `PLAN_UPGRADE`, `PLAN_DOWNGRADE`, `ADD_SEATS`,
-`REDUCE_SEATS`, `RENEWAL` (`subscription_changes.type`).
+A lower plan tier or same-plan seat reduction is saved with `effective_at` equal
+to the current paid period end. No payment/refund occurs immediately; the
+subscription continues to expose its current plan/seats. At/after the boundary,
+`materializeSubscription` applies the scheduled change before status/renewal
+calculation and records its state. Expired subscriptions still require renewal.
+The existing lazy materialization model remains: no new background scheduler
+has been introduced in R1. Renewing before a scheduled change is due returns
+`409 CHANGE_SCHEDULED` to avoid billing the obsolete plan.
 
-`openChange(client, teamId, actorId, computed, now)` runs in the caller's
-transaction and writes:
+All billing, invitation creation and invitation acceptance serialize on the team
+row, with lock order team -> subscription -> payment. Capacity includes members
+plus unexpired pending invitations. A resend of an existing invitation does not
+consume a second reservation. Acceptance rechecks the locked invitation and
+capacity, so concurrent acceptance cannot create duplicate members. A scheduled
+lower capacity also limits future reservations immediately, so the downgrade
+remains feasible. Seat edits and checkout reject a target below reservations.
 
-1. `subscription_changes` row — `PENDING_PAYMENT` if a charge is due,
-   `PAID` otherwise.
-2. `billing_invoices` row — `OUTSTANDING` or `PAID` accordingly.
-3. When a charge is due, a `payment_transactions` row with a unique
-   `tx_ref` (`rota-<uuid>`) and `PENDING` status.
+## Initiation and reconciliation
 
-- **No charge** (downgrade, seat reduction, FREE renewal): the new
-  plan/seats are applied immediately inside `openChange` and a
-  `SUBSCRIPTION_CHANGED` activity event is written.
-- **Charge** (upgrade, seat addition, paid renewal): the change stays
-  `PENDING_PAYMENT`; the API returns the checkout URL. The subscription is
-  **not** modified until the payment settles.
+Owner-only `POST /teams/:teamId/subscription/{checkout,seats,renew}` requires
+`Idempotency-Key: <client-generated UUID>`. CORS permits this header. The mobile
+client persists a key per user/team/operation/input, shares an in-flight request,
+retains it after lost responses/restarts, and clears it for its matching terminal
+payment. New randomness uses `expo-crypto`; rebuild the native app to include it.
 
-### Renewal
+The server stores the request hash and response under team/actor/key in the same
+transaction as the change/invoice/payment, before calling the provider. A replay
+returns the same reference/result; changed intent with that key returns 409.
+The provider call occurs outside the database transaction, once per reserved
+intent. A lost/ambiguous provider response leaves a 202 processing response and
+is not automatically reissued. This prevents duplicate checkout creation but
+requires later verification/webhook/manual resolution if initialization crashed.
 
-`POST /renew` → `computeRenewal(sub, plan)`: one full month at current
-price × seats. Free plans renew instantly (no payment). Paid renewals open a
-`PENDING` payment; on success `applyRenewal` sets a fresh `period_started_at =
-now` / `period_ends_at = now + periodDays`. A failed renewal marks the change
-`FAILED` and, only if the subscription was `ACTIVE`, flips it to `PAST_DUE`
-with `grace_ends_at = now + graceDays`.
+Success is 201 with checkout URL; scheduled/zero-due change is 200; unresolved
+initialization is 202 with the reserved payment and processing=true. A distinct
+new UUID represents a distinct authorized intent, not a retry.
 
-## Payment verification & idempotency
+Settlement locks the team and payment, validates reference/currency/amount,
+then claims PENDING exactly once. A quote stores the expected subscription
+revision. A late payment cannot overwrite a newer paid change; it is recorded
+with an unapplied credit for manual resolution. A late failed renewal also
+cannot invalidate a newer paid upgrade. Existing webhook hash verification and
+webhook deduplication are retained. Durable webhook processing is outside R1.
 
-Reconciliation (`reconcilePayment`) runs inside an explicit transaction and is
-used by both `POST /subscription/verify` and the webhook:
+## Append-only ledger and reconstruction
 
-1. Load the `PENDING`‑or‑later payment by `(team_id, tx_ref)`
-   (404 `PAYMENT_NOT_FOUND` if unknown).
-2. Already `SUCCESSFUL`/`FAILED` → `ALREADY_PROCESSED` (no-op replay).
-3. Validate gateway data: tx_ref match, currency must equal
-   `BILLING_CURRENCY`, amount within tolerance (400 `PAYMENT_MISMATCH` if any
-   fails; the outer `ROLLBACK` leaves nothing half-applied), and no conflicting
-   `flw_transaction_id`.
-4. **Claim** the payment with a guarded update:
-   `UPDATE ... SET status = $state WHERE id = $id AND status = 'PENDING'`.
-   A competing settle in a concurrent transaction sees zero rows and returns
-   `ALREADY_PROCESSED`.
-5. Apply the effect: `applyChange` (upgrades/add/seat-changes) or
-   `applyRenewal` (renewals), mark change `PAID`, invoice `PAID`,
-   write `PAYMENT_RECEIVED` + `SUBSCRIPTION_CHANGED` activity.
+`financial_ledger` stores CHARGE, CREDIT, REFUND and zero-amount STATE entries,
+with unique event keys, original currency and optional payment reference.
+Triggers reject UPDATE, DELETE and TRUNCATE. Event-key replay must match the
+original contents; a conflicting entry returns LEDGER_CONFLICT. No cascading
+foreign keys allow operational entity deletion to erase the ledger.
 
-The webhook additionally deduplicates by `webhook_events.event_key`
-(`<event>:<data.id>`, PK) via `ON CONFLICT DO UPDATE ... RETURNING
-processed_at`: a second delivery returns `{ processed: false, reason:
-'duplicate' }`. The `verif-hash` header is validated with a constant-time
-comparison against `FLW_SECRET_HASH` (401 on mismatch). Webhook events for
-other event types are acknowledged and marked processed but not settled.
+A settled prorated payment posts the gross remaining-service CHARGE and the
+unused-time CREDIT, whose difference is the captured amount. CHARGE metadata
+also records receivedMinor. Zero-net immediate changes post both offsetting
+entries. Scheduled downgrades post state only until effective. Imported
+successful payments get opening charges at their original stored amounts;
+opening STATE snapshots honestly mark the beginning of reconstructable history.
+No earlier missing accounting events are fabricated.
 
-## API endpoints
+Every R1 subscription transition atomically appends a canonical STATE snapshot,
+including full scheduled-change details. `reconstructSubscription` and
+`reconstructBilling` read only immutable ledger data. The latter reads state,
+schedule and per-currency charge/credit/refund totals in one SQL snapshot;
+`GET /teams/:teamId/subscription/ledger/reconstruction` exposes it to owners.
+Tests corrupt the mutable subscription and prove exact reconstruction. Currencies
+are never netted against one another; totals are decimal strings for precision.
 
-All under `/teams/:teamId`, **OWNER only** (403 for managers/staff,
-404 for non-members), except the two public `/billing` routes:
+`recordRefund` is an internal accounting function for an externally confirmed
+refund. It locks the settled payment, caps cumulative refunds at the actual
+captured amount, and deduplicates event keys. It never calls Flutterwave or
+moves funds. There is no new public refund endpoint. Database administrators
+can disable triggers; this is database-enforced append-only accounting, not an
+external tamper-proof archive. R1 preserves pre-existing mutable invoice/payment
+projections; the ledger is the new immutable financial history.
 
-Subscription (`/teams/:teamId/subscription`):
+## Disposable verification
 
-- `GET /` — enrollment summary: `subscription` (with `planName`,
-  `planPricePerSeatMinor`, `planMaxSeatsExempt`), `seatsUsed`,
-  `pendingInvites`, `seatCapacity`, `billingEnabled`, `pendingPayment`,
-  `latestFailedRenewal`.
-- `GET /plans` — public plan catalog (ascending price).
-- `POST /checkout` — `{ planCode, seats? }`. Charges when the monthly
-  accrue is positive; otherwise applies immediately.
-- `POST /seats` — `{ seats }` on the current plan.
-- `POST /renew` — one full period at current config.
-- `POST /verify` — `{ txRef, transactionId }`. Calls Flutterwave
-  `GET /v3/transactions/:id/verify`, then reconciles.
-- `GET /changes` — change history, cursor paginated.
-- `GET /billing` — invoice history, cursor paginated.
+Normal development services on 5440/6380 are not used. Create these isolated
+services once (the passwords below are disposable test credentials):
 
-Public (`/billing`):
+```powershell
+docker run -d --name rota-r1-test-postgres -e POSTGRES_PASSWORD=r1-disposable-only -e POSTGRES_DB=rota_r1_test -p 127.0.0.1:5540:5432 postgres:15-alpine
+docker run -d --name rota-r1-test-redis -p 127.0.0.1:6480:6379 redis:7-alpine
+docker run -d --name rota-r1-test-shard-0 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=rota_r1_shard_0 -p 127.0.0.1:5541:5432 postgres:15-alpine
+docker run -d --name rota-r1-test-shard-1 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=rota_r1_shard_1 -p 127.0.0.1:5542:5432 postgres:15-alpine
+npm run build:shared
+npm run test:r1
+```
 
-- `POST /webhook/flutterwave` — Flutterwave webhook: `verif-hash` check +
-  `event_key` dedupe + reconciliation. Rate limited (300 req / 15 min / IP).
-- `GET /redirect` — browser landing page after hosted checkout; carries no
-  secrets and just tells the user to return to the app.
+Wait for PostgreSQL readiness before running. The script pins every database,
+Redis, provider and push URL instead of reading real service credentials from
+`.env`, applies migrations only to the isolated main test database, and runs
+Jest serially. Sharding tests migrate only these disposable shards. The upgrade
+preservation test creates/drops only `rota_r1_upgrade_test` on the guarded
+127.0.0.1:5540 disposable PostgreSQL server. Integration tests really use
+PostgreSQL/Redis; gateway responses and HTTP adapter fetches are mocked.
+No real financial transaction is executed.
 
-Paid-plan responses return `201` with `checkoutUrl`; no-charge responses
-return `200`. `initializeCheckout` returns the hosted payment link by POSTing
-`/v3/payments` with `tx_ref`, major-unit amount, `redirect_url =
-<host>/billing/redirect`, and the actor's email.
-
-## Mobile
-
-Owner-only screens in `apps/mobile/app/subscription/`:
-
-- `index.tsx` — plan, status, seats/capacity, period, pending payment,
-  renewal (opens checkout when a charge is due), graceful/expired warnings.
-- `plans.tsx` — plan catalog with optional seat count; runs checkout and opens
-  it via `WebBrowser.openAuthSessionAsync(checkoutUrl, <API>/billing/redirect)`.
-  If the return URL carries `tx_ref` + `transaction_id` it calls
-  `POST /verify`; otherwise it refetches the summary and lets the webhook
-  settle the payment.
-- `billing.tsx` — change history + invoices (recent 50 each).
-
-Settings (`app/(tabs)/settings.tsx`) links to these three for the selected
-team when the signed-in user is an owner. The API layer lives in
-`apps/mobile/src/api/billing.ts`; checkout return parsing in
-`apps/mobile/src/utils/checkout.ts`.
-
-## Known limitations
-
-- No refunds or prorated credits for downgrades/seat reductions.
-- `CANCELLED` status is defined but nothing produces it yet.
-- Seats can be lowered only down to the current member count
-  (members first must be removed).
-- Webhook and verify are the only settlement paths; a payment that is neither
-  verified nor delivered by webhook stays `PENDING` forever (no expiry job).
-- Live/sandbox latency and the end-to-end card flow require real Flutterwave
-  credentials and have not been exercised.
+Jest caches under the ignored repository `.r1-test-cache` directory to avoid
+the earlier temporary-cache EPERM problem. The large-dataset reseed test has
+the same 120-second budget as its existing setup; its assertions are unchanged.
+Mobile has no runtime test runner; client intent logic is exercised in the API
+Jest process by importing the actual shared implementation. Device checkout
+and a real Flutterwave account's USD capabilities remain unverified.

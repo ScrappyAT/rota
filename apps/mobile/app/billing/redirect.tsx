@@ -52,7 +52,7 @@ export default function BillingRedirectScreen() {
           const res = await verifyPayment(teamId, txRef, transactionId);
           if (res.outcome === 'SUCCESS') {
             setMessage('Payment verified!');
-          } else if (res.outcome === 'ALREADY_PROCESSED') {
+          } else if(res.outcome==='ALREADY_PROCESSED'&&res.payment?.status==='SUCCESSFUL') {
             setMessage('Payment confirmed!');
           }
         } catch {

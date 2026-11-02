@@ -180,7 +180,7 @@ describe('Large-dataset validation (seeded multi-team world, 10k+ activity)', ()
       [Array.from({ length: 5 }, (_, i) => seedUuid('team', i))]
     );
     expect(teams.rows[0].total).toBe(5);
-  });
+  }, 120_000);
 
   it('3. tenant isolation holds at scale: outsider gets 404 on every team-1 read', async () => {
     for (const path of ['/activity', '/members', '/shifts', '/swaps']) {

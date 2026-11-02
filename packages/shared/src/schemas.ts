@@ -202,7 +202,10 @@ export const SubscriptionPlanSchema = z.object({
   pricePerSeatMinor: z.number().int().nonnegative(),
   maxSeats: z.number().int().nonnegative(),
   currency: z.string().min(3),
-  isFree: z.boolean().optional(),
+  isFree:z.boolean().optional(),
+  basePriceMinor:z.number().int().nonnegative().optional(),
+  includedSeats:z.number().int().nonnegative().optional(),
+  extraSeatMinor:z.number().int().nonnegative().nullable().optional(),
   price_per_seat_minor: z.number().int().nonnegative().optional(),
   max_seats: z.number().int().nonnegative().optional(),
   is_free: z.boolean().optional(),
@@ -236,7 +239,9 @@ export const SubscriptionChangeSchema = z.object({
   toSeats: z.number().int().positive().nullable(),
   amountMinor: z.number().int().nonnegative(),
   status: z.nativeEnum(SubscriptionChangeStatus),
-  createdAt: isoDate(),
+  createdAt:isoDate(),
+  currency:z.string().optional(),
+  effectiveAt:isoDate().nullable().optional(),
 });
 
 export type SubscriptionChange = z.infer<typeof SubscriptionChangeSchema>;
@@ -260,8 +265,9 @@ export const BillingInvoiceSchema = z.object({
   teamId: z.string().uuid(),
   changeId: z.string().uuid().nullable(),
   amountMinor: z.number().int().nonnegative(),
-  description: z.string().min(1),
-  status: z.nativeEnum(InvoiceStatus),
+  description:z.string().min(1),
+  currency:z.string().optional(),
+  status:z.nativeEnum(InvoiceStatus),
   createdAt: isoDate(),
   paidAt: isoDate().nullable(),
 });
@@ -274,7 +280,13 @@ export const BillingSummarySchema = z.object({
     .extend({
       planName: z.string(),
       planPricePerSeatMinor: z.number().int().nonnegative(),
-      planMaxSeatsExempt: z.boolean(),
+      planMaxSeatsExempt:z.boolean(),
+      currency:z.string().optional(),
+      monthlyPriceMinor:z.number().int().nonnegative().optional(),
+      basePriceMinor:z.number().int().nonnegative().optional(),
+      includedSeats:z.number().int().nonnegative().optional(),
+      extraSeatMinor:z.number().int().nonnegative().nullable().optional(),
+      scheduledChangeId:z.string().uuid().nullable().optional(),
     }),
   seatsUsed: z.number().int().nonnegative(),
   pendingInvites: z.number().int().nonnegative(),
@@ -287,7 +299,7 @@ export type BillingSummary = z.infer<typeof BillingSummarySchema>;
 
 export const CreateCheckoutSchema = z.object({
   planCode: z.string().trim().min(1),
-  seats: z.number().int().positive().optional(),
+  seats:z.number().int().positive().max(100000).optional(),
   returnUrl: z.string().optional(),
 });
 
@@ -301,7 +313,7 @@ export const VerifyPaymentSchema = z.object({
 export type VerifyPaymentInput = z.infer<typeof VerifyPaymentSchema>;
 
 export const UpdateSeatsSchema = z.object({
-  seats: z.number().int().positive(),
+  seats:z.number().int().positive().max(100000),
   returnUrl: z.string().optional(),
 });
 

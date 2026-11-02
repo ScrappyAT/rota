@@ -29,3 +29,6 @@ Thumbs.db
 .vscode/
 # Firebase Android configuration
 apps/mobile/google-services.json
+
+# Disposable R1 verification artifacts
+.r1-test-cache/
