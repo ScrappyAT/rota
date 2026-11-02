@@ -290,3 +290,46 @@ existing custom screen colors and text are not a complete theme/translation syst
 
 Retry, uncertain-outcome and server-receive-time LWW tradeoffs, operational
 commands and executed evidence are in `R2-IMPLEMENTATION-REPORT.md`.
+
+
+## R3 auth and read routing
+
+`POST /auth/password-reset/request {email}` and
+`POST /auth/magic-link/request {email}` return the same generic success for
+registered and unknown accounts. Both enqueue encrypted AUTH_EMAIL requests.
+The worker resolves the account, persists one 15-minute token hash and an
+additional encrypted delivery intent in one transaction. Resend-compatible
+email POSTs use the delivery job UUID as provider idempotency key.
+
+`POST /auth/password-reset/confirm {token,password}` consumes once and revokes
+all refresh/access sessions; `POST /auth/magic-link/consume {token}` consumes
+once and returns the existing AuthResponse shape. No GET consumes credentials.
+`POST /auth/logout-all {}` requires authentication and invalidates every device.
+`POST /auth/logout {refreshToken?}` revokes the current new-format session.
+Legacy clients keep `/auth/refresh {userId,refreshToken}`; lazy upgrade preserves
+valid opaque tokens. Refresh replay globally revokes the user, including newly
+rotated descendants. Auth uses an authoritative user epoch and session lookup
+on every request; Redis/replicas are never revocation authorities.
+
+All request collections are bounded before Zod validation (32 KiB, 100 entries
+per collection, 1,000 traversal nodes, depth 20). Route body schemas reject
+unknown fields, aside from provider-owned webhook metadata. Query and UUID
+shape validation precede route access. Billing redirect callback names remain
+accepted. Redis quotas apply per IP and per normalized account/user; fixed
+windows and their expiry are atomic. Sensitive errors fail closed with 503.
+
+`services/read-routing.ts` supplies a bounded optional read pool for explicit
+roster/calendar/activity SELECTs. Primary-only code handles authentication,
+tenant membership, financial state, settings, details and all transactions.
+Before an authenticated mutation, a user_write_fences upsert persists a
+five-minute primary lease. During it reads bypass Redis and use primary SQL;
+primary query results may refresh cache. Read errors roll back and fall back to
+primary. Replication/lag is an operational topology concern, separate from the
+unchanged team-hash sharding simulation. The independent read DB test is a
+simulation, not proof of physical replication or automated failover.
+
+The PDF's renewal grace means PAST_DUE remains writable while grace_ends_at is
+in the future. Expired/missing grace denies protected writes; reads and renewal
+remain available. Seat capacity, financial revisions and ledger rules remain
+unchanged. Swap approval requires OWNER/MANAGER and locks the pending request;
+staff requester/replacement status does not grant approval permission.

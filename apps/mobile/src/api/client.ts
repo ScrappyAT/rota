@@ -3,10 +3,14 @@ import { authStorage } from '../storage/authStorage';
 
 export const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.101:3000';
 
-const AUTH_ENDPOINTS = ['/auth/login', '/auth/register', '/auth/refresh'];
+const AUTH_ENDPOINTS = ['/auth/login', '/auth/register', '/auth/refresh','/auth/password-reset','/auth/magic-link'];
 
 class ApiClient {
+  private authInvalidListeners=new Set<(userId:string)=>void>();
+  onAuthInvalid(listener:(userId:string)=>void):()=>void{this.authInvalidListeners.add(listener);return()=>{this.authInvalidListeners.delete(listener);};}
   private refreshInFlight: Promise<boolean> | null = null;
+
+  async refreshSession():Promise<boolean>{return this.tryRefresh();}
 
   private async tryRefresh(): Promise<boolean> {
     if (this.refreshInFlight) return this.refreshInFlight;
@@ -30,6 +34,8 @@ class ApiClient {
           return true;
         }
 
+        if(response.status!==401&&response.status!==400)return false;
+        for(const listener of this.authInvalidListeners)listener(userId);
         await authStorage.deleteItemAsync('accessToken');
         await authStorage.deleteItemAsync('refreshToken');
         await authStorage.deleteItemAsync('userId');

@@ -13,11 +13,11 @@ const PLATFORMS = ['android', 'ios', 'web'] as const;
 const RegisterDeviceSchema = z.object({
   token: z.string().trim().min(10).max(500),
   platform: z.enum(PLATFORMS).default('android'),
-});
+}).strict();
 
 const UnregisterDeviceSchema = z.object({
   token: z.string().trim().min(1).max(500),
-});
+}).strict();
 
 const UpdatePreferencesSchema = z
   .object({
@@ -25,7 +25,7 @@ const UpdatePreferencesSchema = z
     swapRequested: z.boolean().optional(),
     swapApproved: z.boolean().optional(),
     swapRejected: z.boolean().optional(),
-  })
+  }).strict()
   .refine((d) => [d.shiftAssigned, d.swapRequested, d.swapApproved, d.swapRejected].some((v) => v !== undefined), {
     message: 'At least one preference must be provided',
     path: ['preferences'],

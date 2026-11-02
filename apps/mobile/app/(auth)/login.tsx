@@ -34,6 +34,13 @@ export default function LoginScreen() {
     }
   };
 
+  const requestLink=async(kind:'password-reset'|'magic-link')=>{
+    if(!email)return Alert.alert('Email required','Enter your account email first.');
+    setLoading(true);
+    const response=await apiClient.request<{message:string}>(`/auth/${kind}/request`,{method:'POST',body:JSON.stringify({email})});
+    setLoading(false);
+    Alert.alert(response.success?'Check your email':'Request failed',response.data?.message||response.error?.message);
+  };
   return (
     <Screen style={styles.container}>
       <View style={styles.header}>
@@ -70,6 +77,8 @@ export default function LoginScreen() {
         />
       </View>
 
+      <Button title="Email me a sign-in link" variant="ghost" disabled={loading} onPress={()=>requestLink('magic-link')} />
+      <Button title="Forgot password" variant="ghost" disabled={loading} onPress={()=>requestLink('password-reset')} />
       <View style={styles.footer}>
         <Text style={typography.bodySmall}>Don't have an account?</Text>
         <Button

@@ -69,6 +69,7 @@ export default function SettingsScreen() {
 
       <Card style={styles.card}><ServerSettings /></Card>
 
+      <Button title="Log out of all devices" variant="danger" onPress={async()=>{try{await logout(true);}catch(error){Alert.alert('Logout failed',error instanceof Error?error.message:'Try again');}}} />
       <Button
         title="Sign Out"
         variant="danger"

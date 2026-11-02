@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import rateLimit from 'express-rate-limit';
+import { redisRateLimit } from '../middleware/rate-limit-redis';
 import { pool } from '../db';
 import { verifyWebhookHash } from '../billing/flutterwave';
 import { enqueueOutbox } from '../services/outbox';
@@ -57,14 +57,7 @@ router.get('/redirect', (req, res) => {
     );
 });
 
-const webhookLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 300,
-  message: {
-    success: false,
-    error: { code: 'TOO_MANY_REQUESTS', message: 'Try again later' },
-  },
-});
+const webhookLimiter=redisRateLimit({windowSeconds:900,max:300,keyPrefix:'rl:webhook',failClosed:true});
 
 const WebhookSchema = z.object({event:z.string().min(1).max(100),data:z.object({id:z.union([z.string().min(1).max(100),z.number().int().nonnegative()]),tx_ref:z.string().max(200).optional()}).passthrough()}).passthrough();
 // Authenticate and durably accept only. Provider verification/settlement happens in a worker.

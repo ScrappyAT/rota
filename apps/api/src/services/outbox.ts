@@ -1,6 +1,6 @@
 import { PoolClient } from 'pg';
 import { HttpError } from '../http-error';
-export type JobKind = 'DOMAIN_EVENT' | 'NOTIFICATION' | 'PAYMENT_WEBHOOK' | 'PAYMENT_INITIALIZE' | 'PAYMENT_RECONCILE' | 'PAYMENT_VERIFY' | 'BILLING_RECHECK';
+export type JobKind = 'DOMAIN_EVENT' | 'NOTIFICATION' | 'PAYMENT_WEBHOOK' | 'PAYMENT_INITIALIZE' | 'PAYMENT_RECONCILE' | 'PAYMENT_VERIFY' | 'BILLING_RECHECK' | 'AUTH_EMAIL';
 export interface OutboxRow {
   id: string;
   event_key: string;

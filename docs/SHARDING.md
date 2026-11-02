@@ -269,3 +269,39 @@ While sharding by `team_id` provides horizontal scalability for small-business s
 - **Long-Term Scaling Solutions:**
   1. **Consistent Hashing with Virtual Nodes (vnodes):** Map shards onto a 360-degree hash ring with virtual nodes (e.g. 256 vnodes per physical shard). Adding a new physical shard only requires migrating keys from adjacent virtual segments (moving approximately $1/(N+1)$ of total data).
   2. **Directory-Based Routing Table:** Maintain a lightweight global lookup table `team_shards(team_id UUID PRIMARY KEY, shard_id INT)`. While this adds a fast cached lookup (e.g. in Redis), it provides arbitrary rebalancing capability: individual hot teams can be migrated between physical servers without changing their `team_id` or recomputing hashes.
+
+
+## R3 replication is separate from sharding
+
+The two-database team hash simulation and its 11 real PostgreSQL integration
+tests are unchanged. A shard contains a subset of teams; a replica contains
+copies of the primary's data. Never put SHARD_0_DATABASE_URL or
+SHARD_1_DATABASE_URL in READ_DATABASE_URL. Production tenant data still uses
+the authoritative main pool; the existing sharding demo has its own router,
+pools, coordinator and schema.
+
+R3 adds explicit readQuery routing for roster, shift-calendar and activity
+SELECTs, with READ_DATABASE_URL and DB_POOL_MAX=10. Ten connections per pool
+bound each API process to at most 20 connections when reads are configured;
+workers need their own ten primary connections. Size process count and worker
+count within the provider's connection limit; use a pooled provider endpoint or
+PgBouncer when scaling. Connection acquisition is bounded (2s primary/1s read),
+statement execution is bounded (15s primary/3s read), and transactions remain on
+primary. Auth, authorization, settings and financial reads always use primary.
+
+Before mutations a primary user_write_fences row grants a conservative
+five-minute primary lease to that user on every device/API instance. Cached
+reads are bypassed while the lease is active. This handles requests that crash
+after commit, without relying on Redis or client timestamps/headers. An invalid
+mutation can also create a harmless lease. Other users can still observe
+replication lag; lag longer than five minutes needs monitoring and disabling
+replica reads. A GET that began before a concurrent write is not linearizable.
+Provider replicas need schema parity, replication monitoring, TLS, least-
+privilege read credentials and backups before actual use. Read pool failures
+fall back to primary; no replica is promoted for writes automatically.
+
+The PDF explicitly permits a second read connection string when a provider has
+no replica plan. R3 uses that implementation option. Disposable tests configure
+a second pool to the test primary for general regression and a separate read
+DB on 5543 with deliberately stale marker data for lag/error drills. It is not
+WAL replication. Actual replica provisioning/failover has not been performed.

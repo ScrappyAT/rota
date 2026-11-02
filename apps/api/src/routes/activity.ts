@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { pool } from '../db';
+import { readQuery } from '../services/read-routing';
 import { AuthRequest } from '../middleware/auth';
 import { requireRole } from '../middleware/tenant';
 import { Roles } from '@rota/shared';
@@ -67,7 +67,7 @@ router.get('/', async (req: AuthRequest, res, next) => {
 
     params.push(limit + 1);
 
-    const { rows } = await pool.query(
+    const { rows } = await readQuery(req.user!.id,
       `SELECT a.id, a.team_id as "teamId", a.actor_id as "actorId", a.type, a.payload, a.created_at as "createdAt"
        FROM activity_events a
        WHERE ${conditions.join(' AND ')}

@@ -117,7 +117,7 @@ router.get('/:swapId', requireRole([Roles.OWNER, Roles.MANAGER, Roles.STAFF]), a
 });
 
 // Approve a swap request
-router.post('/:swapId/approve', async (req: AuthRequest, res, next) => {
+router.post('/:swapId/approve', requireRole([Roles.OWNER,Roles.MANAGER]), async (req: AuthRequest, res, next) => {
   try {
     const teamId = uuidParam(req.params.teamId, 'teamId');
     const swapId = uuidParam(req.params.swapId, 'swapId');
@@ -132,7 +132,7 @@ router.post('/:swapId/approve', async (req: AuthRequest, res, next) => {
                 sr.status, s.team_id as "teamId", s.title as "shiftTitle"
          FROM swap_requests sr
          JOIN shifts s ON s.id = sr.shift_id
-         WHERE sr.id = $1 AND s.team_id = $2`,
+         WHERE sr.id = $1 AND s.team_id = $2 FOR UPDATE OF sr`,
         [swapId, teamId]
       );
       if (rows.length === 0) {
@@ -142,14 +142,7 @@ router.post('/:swapId/approve', async (req: AuthRequest, res, next) => {
 
       const myRole = await reviewerRole(client, teamId, actorId);
       const isManagerOrOwner = myRole === Roles.OWNER || myRole === Roles.MANAGER;
-      const isOfferedUser = swap.offeredTo === actorId;
-
-      if (!isManagerOrOwner && !isOfferedUser) {
-        throw new HttpError(403, 'FORBIDDEN', 'Only owners, managers, or the proposed replacement can approve this swap');
-      }
-      if (swap.offeredTo && !isManagerOrOwner && !isOfferedUser) {
-        throw new HttpError(403, 'FORBIDDEN', 'Only the proposed replacement can approve a targeted swap');
-      }
+      if (!isManagerOrOwner) throw new HttpError(403,'FORBIDDEN','Manager approval required');
 
       if (swap.status !== SwapStatus.PENDING) {
         throw new HttpError(409, 'SWAP_NOT_PENDING', `Swap request is already ${swap.status.toLowerCase()}`);
@@ -254,7 +247,7 @@ router.post('/:swapId/reject', async (req: AuthRequest, res, next) => {
                 s.team_id as "teamId", s.title as "shiftTitle", sr.shift_id as "shiftId"
          FROM swap_requests sr
          JOIN shifts s ON s.id = sr.shift_id
-         WHERE sr.id = $1 AND s.team_id = $2`,
+         WHERE sr.id = $1 AND s.team_id = $2 FOR UPDATE OF sr`,
         [swapId, teamId]
       );
       if (rows.length === 0) {
@@ -360,7 +353,7 @@ const fetchSwapForTeamInTx = async (client: import('pg').PoolClient, teamId: str
             sr.status, s.team_id as "teamId", s.title as "shiftTitle"
      FROM swap_requests sr
      JOIN shifts s ON s.id = sr.shift_id
-     WHERE sr.id = $1 AND s.team_id = $2`,
+     WHERE sr.id = $1 AND s.team_id = $2 FOR UPDATE OF sr`,
     [swapId, teamId]
   );
   if (rows.length === 0) {

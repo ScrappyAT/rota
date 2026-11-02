@@ -13,7 +13,7 @@ interface AuthContextType {
   activeTeamId: string | null;
   setActiveTeamId: (id: string | null) => Promise<void>;
   login: (data: AuthResponse) => Promise<void>;
-  logout: () => Promise<void>;
+  logout: (allDevices?:boolean) => Promise<void>;
   refreshAuth: () => Promise<void>;
 }
 
@@ -34,6 +34,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  useEffect(()=>apiClient.onAuthInvalid((id)=>{
+    setUser(null);setActiveTeamIdState(null);queryClient.clear();
+    void clearUserCache(id);void authStorage.deleteItemAsync('activeTeamId');
+  }),[]);
+
   useEffect(() => {
     refreshAuth();
   }, []);
@@ -45,7 +50,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     if (!user && !inAuthGroup) {
       router.replace('/(auth)/login');
-    } else if (user && inAuthGroup) {
+    } else if (user && inAuthGroup && (segments as string[])[1] !== 'action') {
       router.replace('/');
     }
   }, [user, loading, segments]);
@@ -57,7 +62,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await authStorage.setItemAsync('userId', data.user.id);
   };
 
-  const logout = async () => {
+  const logout = async (allDevices=false) => {
+    if(allDevices){const response=await apiClient.request('/auth/logout-all',{method:'POST',body:'{}'});if(!response.success)throw new Error(response.error?.message||'Could not revoke sessions');}
     await unregisterCurrentDevice();
     if (user?.id) {
       await clearUserCache(user.id);
@@ -94,15 +100,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       if (refreshToken && userId) {
-        const res = await apiClient.request<AuthResponse>('/auth/refresh', {
-          method: 'POST',
-          body: JSON.stringify({ refreshToken, userId }),
-        });
-
-        if (res.success && res.data) {
-          setUser(res.data.user);
-          await authStorage.setItemAsync('accessToken', res.data.accessToken);
-          await authStorage.setItemAsync('refreshToken', res.data.refreshToken);
+        const refreshed=await apiClient.refreshSession();
+        const res=refreshed?await apiClient.request<User>('/auth/me'):null;
+        if (res?.success && res.data) {
+          setUser(res.data);
         } else {
           setUser(null);
           await authStorage.deleteItemAsync('accessToken');

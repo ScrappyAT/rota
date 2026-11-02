@@ -124,3 +124,48 @@ below describe the earlier implementation.
   k6 suite in `load-tests/`. Empirical results before and after caching are
   documented in `load-tests/REPORT.md` and `docs/PERFORMANCE-REPORT.md`.
 - **Graduation checklist**: `docs/SUBMISSION.md`.
+
+
+## R3 authentication, security and read routing
+
+R3 changes remain local for review. See [R3 implementation report](docs/R3-IMPLEMENTATION-REPORT.md)
+for verification, compatibility and operational boundaries.
+
+After reviewing migration 009, migrate your intended development environment
+using the existing migration command. Existing migrations 001–008 are unchanged.
+Upgrade all workers before enabling new auth routes (old workers cannot process
+AUTH_EMAIL). Run the separate worker (`npm run worker:dev`, or build then `npm run worker`)
+for password-reset and magic-link mail. Configure server-only `AUTH_MAIL_KEY`
+(32 random bytes as 64 hex characters), `MAIL_API_KEY`, `MAIL_FROM`,
+`MAIL_API_URL` (default Resend), and `AUTH_LINK_BASE` (default `rota://action`).
+Do not place these secrets in Expo variables. Without mail configuration the
+request fails uniformly or delivery remains queued; no raw link is returned.
+The app's login page requests either link and the account-action screen requires
+an explicit tap before consuming it. Production startup requires configured
+HTTPS mail delivery and a verified sender; no live delivery was exercised here.
+
+`READ_DATABASE_URL` optionally routes roster, calendar and activity SELECTs to a
+read endpoint. Without it, the primary handles reads. `DB_POOL_MAX=10` bounds
+each pool. Authentication, permissions, settings, subscriptions, payments and
+workers always use the primary. A durable per-user five-minute primary lease is
+created before mutations; cached reads are bypassed during that lease. See
+[sharding and replication](docs/SHARDING.md) for topology and lag limitations.
+
+Isolated checks (never run destructive tests against the ordinary dev database):
+
+```powershell
+docker compose -f infrastructure/docker-compose.r3-tests.yml up -d --wait
+npm run test:r3
+npm run typecheck
+npm run lint
+npm run build:api
+```
+
+R3 uses disposable ports 5540/6480, shard ports 5541/5542 and read-drill port
+5543. The runner pins fake payment, push and mail settings to localhost and runs
+Jest serially. Its normal read connection uses the disposable primary through a
+separate pool; routing drills use a second independent PostgreSQL database to
+simulate lag and failure, not physical WAL replication. It raises only outer
+load budgets; dedicated sensitive-route limits remain active. Each test clears
+only limiter keys on the disposable Redis to prevent cross-test quota leakage.
+Mobile runtime, live emails, deployment and R4 are not verified by these commands.

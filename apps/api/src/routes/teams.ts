@@ -1,8 +1,10 @@
+import { readQuery } from '../services/read-routing';
+import { z } from 'zod';
 import { Router } from 'express';
 import { pool } from '../db';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { requireRole } from '../middleware/tenant';
-import { Roles } from '@rota/shared';
+import { Roles,CreateTeamSchema,MemberRoleSchema } from '@rota/shared';
 import { getCache, setCache, cacheKeys, CACHE_TTLS, invalidateRoster } from '../services/cache';
 
 import shiftsRouter from './shifts';
@@ -15,6 +17,7 @@ import { snapshotSubscription } from '../billing/ledger';
 const router = Router();
 
 router.use(authenticate);
+router.param('userId',(req,res,next,value)=>{try {z.string().uuid().parse(value);next();}catch(error){next(error);}});
 
 router.use('/:teamId/shifts', shiftsRouter);
 router.use('/:teamId/swaps', swapsRouter);
@@ -24,21 +27,20 @@ router.use('/:teamId/subscription', subscriptionRouter);
 // Create Team
 router.post('/', async (req: AuthRequest, res, next) => {
   try {
-    const { name } = req.body;
-    if (!name || !req.user) return res.status(400).json({ success: false, error: { code: 'BAD_REQUEST', message: 'Invalid payload' } });
+    const {name}=CreateTeamSchema.parse(req.body);
 
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
       const teamRes = await client.query(
         'INSERT INTO teams (name, owner_id) VALUES ($1, $2) RETURNING id, name, owner_id as "ownerId", created_at as "createdAt"',
-        [name, req.user.id]
+        [name, req.user!.id]
       );
       const team = teamRes.rows[0];
 
       await client.query(
         'INSERT INTO team_memberships (team_id, user_id, role) VALUES ($1, $2, $3)',
-        [team.id, req.user.id, Roles.OWNER]
+        [team.id, req.user!.id, Roles.OWNER]
       );
       await client.query(
         `INSERT INTO team_subscriptions (team_id, plan_code, seats, status, period_started_at, period_ends_at)
@@ -62,7 +64,7 @@ router.post('/', async (req: AuthRequest, res, next) => {
 // List Teams
 router.get('/', async (req: AuthRequest, res, next) => {
   try {
-    const { rows } = await pool.query(
+    const { rows } = await readQuery(req.user!.id,
       'SELECT t.id, t.name, t.owner_id as "ownerId", t.created_at as "createdAt" FROM teams t JOIN team_memberships tm ON t.id = tm.team_id WHERE tm.user_id = $1',
       [req.user!.id]
     );
@@ -75,7 +77,7 @@ router.get('/', async (req: AuthRequest, res, next) => {
 // Get Team Details
 router.get('/:teamId', requireRole([Roles.OWNER, Roles.MANAGER, Roles.STAFF]), async (req: AuthRequest, res, next) => {
   try {
-    const { rows } = await pool.query(
+    const { rows } = await readQuery(req.user!.id,
       'SELECT id, name, owner_id as "ownerId", created_at as "createdAt" FROM teams WHERE id = $1',
       [req.params.teamId]
     );
@@ -95,7 +97,7 @@ router.get('/:teamId/members', requireRole([Roles.OWNER, Roles.MANAGER, Roles.ST
       return res.json({ success: true, data: cached });
     }
 
-    const { rows } = await pool.query(
+    const { rows } = await readQuery(req.user!.id,
       'SELECT tm.id, tm.team_id as "teamId", tm.user_id as "userId", tm.role, u.email, u.first_name as "firstName", u.last_name as "lastName" FROM team_memberships tm JOIN users u ON tm.user_id = u.id WHERE tm.team_id = $1',
       [teamId]
     );
@@ -109,10 +111,7 @@ router.get('/:teamId/members', requireRole([Roles.OWNER, Roles.MANAGER, Roles.ST
 // Update Member Role
 router.patch('/:teamId/members/:userId/role', requireRole([Roles.OWNER]), async (req: AuthRequest, res, next) => {
   try {
-    const { role } = req.body;
-    if (!Object.values(Roles).includes(role)) {
-      return res.status(400).json({ success: false, error: { code: 'BAD_REQUEST', message: 'Invalid role' } });
-    }
+    const {role}=MemberRoleSchema.parse(req.body);
 
     // Prevent last owner demotion
     if (role !== Roles.OWNER) {

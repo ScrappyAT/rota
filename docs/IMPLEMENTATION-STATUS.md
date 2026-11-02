@@ -10,7 +10,7 @@ Status categories:
 - **Not started**
 - **Blocked** — cannot proceed until a listed dependency is resolved.
 
-Last correction validation: R2, 2026-11-02; see Milestone R2 below.
+Last correction validation: R3, 2026-11-02; see Milestone R3 below.
 Earlier phase tables and validation history retain their original audit context.
 
 ---
@@ -258,3 +258,30 @@ jobs after prolonged outages need operator action. Language/theme values sync,
 but a full translated/dark-palette UI is not claimed. R3/R4 and submission
 artifacts have not been reopened. See `R2-IMPLEMENTATION-REPORT.md` for all
 files, migration guarantees, failure evidence, audit findings and limitations.
+
+
+## Milestone R3 — auth, security and routing (2026-11-02)
+
+R1/R2 are merged. R3 starts from synchronized main 1c5be5d on
+`codex/r3-auth-security-routing`; changes remain local for review.
+
+| Requirement | Status | Evidence |
+|---|---|---|
+| Single-use reset and magic-link backend | Completed & verified with mocked mail | r3-auth.integration: expiry, purpose, replay, concurrent consumption, encrypted queue, provider retry |
+| Global/session revocation and safe refresh | Completed & verified | User locks, auth_version, session checks, concurrent refresh/logout-all, legacy upgrade |
+| Manager/owner approval | Completed & verified | r3-policy concurrent approval, staff/requester/replacement 403, outsider 404; push regression now uses owner |
+| Strict inputs and Redis sensitive quotas | Completed & verified | Strict body schemas, request bounds, cursor UUID checks, shared IP/user counters, Redis outage and concurrency tests |
+| Read routing and own-write consistency | Completed & verified as a connection-string simulation | Primary auth/financial reads, durable per-user fence, cache bypass, independent read DB lag/error drills |
+| Existing team-hash sharding | Preserved & regression tested | Unchanged sharding code and 11 tests |
+| Grace access correction | Completed & verified | PAST_DUE remains usable within grace; protected shift creation/invites block after grace |
+| Mobile auth actions/logout-all/session handling | Implemented; typechecked/linted | Device execution, actual email/deep-link delivery remain unverified |
+| Dependency remediation | Partially completed | Four compatible patches; production audit 24→20; remaining major-version/toolchain findings tracked |
+
+Final verification: 373 tests across 31 suites passed in the complete API
+run with zero detected open handles, and again through the root workspace test
+gate. Typecheck, lint (zero errors, one existing warning), shared/API builds
+passed. Mobile tests remain a stub. Full details and risk disposition are in
+`R3-IMPLEMENTATION-REPORT.md`.
+Migrations 001–008 and R1/R2 financial/delivery invariants are preserved.
+No commit, push, merge, deployment, real payment/push/email or R4 work performed.
+Existing published demo/post completion evidence has not been reopened.

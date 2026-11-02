@@ -1,3 +1,4 @@
+import { sensitiveLimit } from '../middleware/rate-limit-redis';
 import { Router } from 'express';
 import { z } from 'zod';
 import { initiateBilling } from '../billing/initiation';
@@ -30,6 +31,8 @@ const router = Router({ mergeParams: true });
 
 // All subscription endpoints are owner-scoped.
 router.use(requireRole([Roles.OWNER]));
+const billingLimits=sensitiveLimit('billing',30);
+router.use((req,res,next)=>req.method==='GET'?next():billingLimits[0](req,res,()=>billingLimits[1](req,res,next)));
 
 // Current subscription + seat usage
 router.get('/', async (req: AuthRequest, res, next) => {
@@ -152,7 +155,7 @@ const redirectUrlFor = (req: AuthRequest, returnUrl?: string): string => {
   return base;
 };
 
-const RenewalSchema=z.object({returnUrl:z.string().optional()});
+const RenewalSchema=z.object({returnUrl:z.string().max(2048).optional()}).strict();
 for (const operation of ['checkout','seats','renew'] as const) {
   router.post('/'+operation,async(req:AuthRequest,res,next)=>{
     try {

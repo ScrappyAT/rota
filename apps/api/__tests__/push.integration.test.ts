@@ -276,7 +276,7 @@ describe('Push Notifications Integration', () => {
     await drainTestJobs(['DOMAIN_EVENT','NOTIFICATION']);
 
     const callsBefore = fetchMock.mock.calls.length;
-    const res = await request(app).post(`/teams/${teamAId}/swaps/${swapId}/approve`).set('Authorization', `Bearer ${charlieToken}`).send();
+    const res = await request(app).post(`/teams/${teamAId}/swaps/${swapId}/approve`).set('Authorization', `Bearer ${aliceToken}`).send();
     expect(res.status).toBe(200);
 
     await drainTestJobs(['DOMAIN_EVENT','NOTIFICATION']);

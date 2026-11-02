@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'async_hooks';
+export const primaryReadContext=new AsyncLocalStorage<boolean>();
 import crypto from 'crypto';
 import { redisClient } from '../redis';
 
@@ -53,7 +55,7 @@ export const cacheKeys = {
  * or when Redis is unavailable/errors.
  */
 export const getCache = async <T>(key: string): Promise<T | null> => {
-  if (!isCacheEnabled()) return null;
+  if (!isCacheEnabled() || primaryReadContext.getStore()) return null;
   try {
     if (!redisClient.isReady) return null;
     const raw = await redisClient.get(key);
