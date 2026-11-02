@@ -1,3 +1,4 @@
+import { handleAuthEmail } from './auth-email';
 import { PoolClient } from 'pg';
 import { UnrecoverableError } from 'bullmq';
 import { initializeCheckout, verifyTransaction, verifyTransactionByReference, VerifiedTransaction } from '../billing/flutterwave';
@@ -28,6 +29,7 @@ const settleVerified = async (client: PoolClient, teamId: string, txRef: string,
   }
 };
 export const handleOutbox = async (client: PoolClient, job: OutboxRow, now: Date): Promise<unknown> => {
+  if (job.kind === 'AUTH_EMAIL') return handleAuthEmail(client,job);
   const data = job.payload;
   if (job.kind === 'NOTIFICATION') {
     if (data.receiptCheck === true)

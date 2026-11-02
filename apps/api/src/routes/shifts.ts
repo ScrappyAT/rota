@@ -1,3 +1,4 @@
+import { readQuery } from '../services/read-routing';
 import { Router } from 'express';
 import { pool } from '../db';
 import { AuthRequest } from '../middleware/auth';
@@ -136,7 +137,7 @@ router.get('/', async (req: AuthRequest, res, next) => {
 
     params.push(limit + 1);
 
-    const { rows } = await pool.query(
+    const { rows } = await readQuery(req.user!.id,
       `SELECT ${SHIFT_COLUMNS}
        FROM shifts s
        WHERE ${conditions.join(' AND ')}

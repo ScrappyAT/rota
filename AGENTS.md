@@ -15,7 +15,7 @@ Current state: auth, teams, shifts, swaps, activity, push, caching and sharding
 exist. Milestone R1 corrects financial behavior only; see
 `docs/R1-IMPLEMENTATION-REPORT.md` and `docs/IMPLEMENTATION-STATUS.md`.
 R1 is merged as PR #1. R2 now adds durable jobs and server settings; see
-`docs/R2-IMPLEMENTATION-REPORT.md`. R3 and R4 remain outside the authorized scope.
+`docs/R2-IMPLEMENTATION-REPORT.md`. R3 is authorized for local implementation/review; R4 remains outside scope.
 
 ## Technology Stack
 
@@ -192,3 +192,28 @@ These are non-negotiable. Any endpoint touching team data must satisfy them:
 - Job env: JOB_QUEUE_NAME, JOB_ATTEMPTS, JOB_BACKOFF_MS, JOB_POLL_MS,
   JOB_CONCURRENCY, EXPO_PUSH_RECEIPTS_URL (see .env.example).
 - R2 remains uncommitted for review; no push, merge, deployment or R3/R4 work.
+
+
+## R3 auth/security/routing rules
+
+- Never edit migrations 001–008. Migration 009 is additive; legacy bcrypt
+  refresh tokens upgrade lazily, while auth_version=0 accepts legacy access
+  JWTs until their normal expiry or a global revocation.
+- Serialize credential changes by locking the user first. A replay commits
+  global revocation before returning 401; never roll it back with an error.
+- Email action tokens are SHA-256 hashes, 15-minute, single-use; only AES-GCM
+  encrypted email/token contents go in AUTH_EMAIL outbox payloads. Never return
+  or log raw links/tokens. Worker delivery uses stable provider idempotency.
+- Sensitive Redis limiters fail closed and atomically increment/set expiry.
+  Never fall back to process memory for authentication/invite/payment quotas.
+- All auth/permission/billing/worker SQL uses the primary. Only explicit
+  readQuery sites route to READ_DATABASE_URL; do not use shard URLs as replicas.
+- Pool max defaults to 10 per endpoint. Durable user write fences bypass stale
+  caches and route reads to primary for five minutes, across devices/processes.
+- New server env: READ_DATABASE_URL, DB_POOL_MAX, AUTH_MAIL_KEY,
+  AUTH_LINK_BASE, MAIL_API_URL, MAIL_API_KEY, MAIL_FROM; see .env.example.
+- R3 test compose/runner use only 5540/6480/5541/5542/5543 and fake providers.
+  Read drill uses an independent DB, not configured WAL replication. Preserve
+  existing sharding simulation and R1/R2 accounting/durable-delivery rules.
+- No R3 commit, push, merge, deployment, real payments/push/mail or R4 work
+  before the user's review.

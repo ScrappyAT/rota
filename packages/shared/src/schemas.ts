@@ -30,16 +30,16 @@ export const TeamSchema = z.object({
 export type Team = z.infer<typeof TeamSchema>;
 
 export const RegisterSchema = z.object({
-  email: z.string().email().transform(e => e.toLowerCase()),
-  password: z.string().min(8),
-  firstName: z.string().min(1),
-  lastName: z.string().min(1),
-});
+  email: z.string().max(254).email().transform(e => e.toLowerCase()),
+  password: z.string().min(8).max(72).refine(v => new TextEncoder().encode(v).length <= 72, 'Password exceeds bcrypt byte limit'),
+  firstName: z.string().min(1).max(100),
+  lastName: z.string().min(1).max(100),
+}).strict();
 
 export const LoginSchema = z.object({
-  email: z.string().email().transform(e => e.toLowerCase()),
-  password: z.string(),
-});
+  email: z.string().max(254).email().transform(e => e.toLowerCase()),
+  password: z.string().max(72),
+}).strict();
 
 export const TeamMembershipSchema = z.object({
   id: z.string().uuid(),
@@ -66,7 +66,7 @@ export const CreateInvitationResponseSchema = z.object({
 
 export const AcceptInvitationSchema = z.object({
   code: z.string().min(1),
-});
+}).strict();
 
 export type CreateInvitationResponse = z.infer<typeof CreateInvitationResponseSchema>;
 export type AcceptInvitationRequest = z.infer<typeof AcceptInvitationSchema>;
@@ -137,7 +137,7 @@ export const CreateShiftSchema = z
     startsAt: z.string().datetime(),
     endsAt: z.string().datetime(),
     assigneeIds: z.array(z.string().uuid()).max(50).optional(),
-  })
+  }).strict()
   .refine((d) => new Date(d.endsAt).getTime() > new Date(d.startsAt).getTime(), {
     message: 'endsAt must be after startsAt',
     path: ['endsAt'],
@@ -152,7 +152,7 @@ export const UpdateShiftSchema = z
     startsAt: z.string().datetime().optional(),
     endsAt: z.string().datetime().optional(),
     status: z.nativeEnum(ShiftStatus).optional(),
-  })
+  }).strict()
   .refine(
     (d) =>
       !(d.startsAt && d.endsAt) ||
@@ -167,20 +167,20 @@ export type UpdateShiftInput = z.infer<typeof UpdateShiftSchema>;
 
 export const AssignShiftSchema = z.object({
   userIds: z.array(z.string().uuid()).min(1).max(50),
-});
+}).strict();
 
 export type AssignShiftInput = z.infer<typeof AssignShiftSchema>;
 
 export const CreateSwapSchema = z.object({
   offeredTo: z.string().uuid().nullable().optional(),
   reason: z.string().max(1000).optional(),
-});
+}).strict();
 
 export type CreateSwapInput = z.infer<typeof CreateSwapSchema>;
 
 export const SwapReasonSchema = z.object({
   reason: z.string().max(1000).optional(),
-});
+}).strict();
 
 export type SwapReasonInput = z.infer<typeof SwapReasonSchema>;
 
@@ -302,28 +302,39 @@ export type BillingSummary = z.infer<typeof BillingSummarySchema>;
 export const CreateCheckoutSchema = z.object({
   planCode: z.string().trim().min(1),
   seats:z.number().int().positive().max(100000).optional(),
-  returnUrl: z.string().optional(),
-});
+  returnUrl: z.string().max(2048).optional(),
+}).strict();
 
 export type CreateCheckoutInput = z.infer<typeof CreateCheckoutSchema>;
 
 export const VerifyPaymentSchema = z.object({
   txRef: z.string().trim().min(1),
   transactionId: z.string().trim().min(1),
-});
+}).strict();
 
 export type VerifyPaymentInput = z.infer<typeof VerifyPaymentSchema>;
 
 export const UpdateSeatsSchema = z.object({
   seats:z.number().int().positive().max(100000),
-  returnUrl: z.string().optional(),
-});
+  returnUrl: z.string().max(2048).optional(),
+}).strict();
 
 export type UpdateSeatsInput = z.infer<typeof UpdateSeatsSchema>;
 
 export const ChangeSubscriptionSchema = z.object({
   planCode: z.string().trim().min(1),
-});
+}).strict();
 
 export type ChangeSubscriptionInput = z.infer<typeof ChangeSubscriptionSchema>;
 
+
+export const RefreshSchema = z.object({userId:z.string().uuid(),refreshToken:z.string().min(32).max(256)}).strict();
+export const LogoutSchema = z.object({refreshToken:z.string().min(32).max(256).optional()}).strict();
+export const EmailActionSchema = z.object({email:z.string().max(254).email().transform(v=>v.toLowerCase())}).strict();
+export const ActionTokenSchema = z.string().regex(/^[a-f0-9]{64}$/);
+export const ResetPasswordSchema = z.object({token:ActionTokenSchema,password:RegisterSchema.shape.password}).strict();
+export const MagicConsumeSchema = z.object({token:ActionTokenSchema}).strict();
+export const CreateTeamSchema = z.object({name:z.string().trim().min(1).max(255)}).strict();
+export const MemberRoleSchema = z.object({role:z.nativeEnum(Roles)}).strict();
+export const CreateInvitationSchema = z.object({email:z.string().max(254).email().transform(v=>v.toLowerCase()),role:z.nativeEnum(Roles)}).strict();
+export const RedeemInvitationSchema = z.object({code:z.string().trim().max(256).optional(),token:z.string().trim().max(256).optional()}).strict().refine(v=>Boolean(v.code||v.token),'Invitation code required').refine(v=>!v.code||!v.token||v.code===v.token,'Conflicting codes');

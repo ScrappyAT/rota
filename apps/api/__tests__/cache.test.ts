@@ -322,8 +322,8 @@ describe('Redis Cache-Aside, Invalidation, and Tenant Isolation', () => {
         .set('Authorization', `Bearer ${ownerToken}`);
       expect(shiftsRes.status).toBe(200);
 
-      // Redis must have 0 keys because cache is disabled
-      const allKeys = await redisClient.keys('*');
+      // No cache keys; Redis security quotas remain enabled.
+      const allKeys = await redisClient.keys('cache:*');
       expect(allKeys.length).toBe(0);
 
       // Re-enable

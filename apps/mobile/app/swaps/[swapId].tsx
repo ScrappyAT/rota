@@ -37,11 +37,12 @@ export default function SwapDetailScreen() {
   if (query.isError || !query.data)
     return <Screen><Text>This swap is unavailable or you no longer have access.</Text><Button title="Retry" onPress={() => { void query.refetch(); }} /></Screen>;
   const swap = query.data;
-  const mayReview = swap.status === 'PENDING' && (role === 'OWNER' || role === 'MANAGER' || swap.offeredTo === user?.id);
+  const mayApprove=swap.status==='PENDING'&&(role==='OWNER'||role==='MANAGER');
+  const mayReview = swap.status === 'PENDING' && (mayApprove || swap.offeredTo === user?.id);
   return <Screen><Stack.Screen options={{ title: 'Swap request' }} /><View style={{ gap: 12 }}>
     <Text>{swap.shiftTitle}</Text><Text>{formatRange(swap.shiftStartsAt, swap.shiftEndsAt)}</Text>
     <Text>Requested by {swap.requesterName ?? swap.requesterEmail}</Text><Text>{swap.reason}</Text><Text>{swap.status}</Text>
-    {mayReview ? <><Button title="Approve" disabled={change.isPending || isOffline} onPress={() => change.mutate(true)} /><Button title="Reject" disabled={change.isPending || isOffline} onPress={() => change.mutate(false)} /></> : null}
+    {mayReview ? <><Button title="Approve" disabled={!mayApprove || change.isPending || isOffline} onPress={() => change.mutate(true)} /><Button title="Reject" disabled={change.isPending || isOffline} onPress={() => change.mutate(false)} /></> : null}
     {change.isError ? <Text>{change.error.message}</Text> : null}
   </View></Screen>;
 }

@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { HttpError } from './http-error';
 
 export const DEFAULT_LIMIT = 20;
@@ -32,21 +33,9 @@ export const decodeCursor = (cursor: string): DecodedCursor => {
     throw new HttpError(400, 'INVALID_CURSOR', 'Invalid pagination cursor');
   }
 
-  if (
-    !parsed ||
-    typeof parsed !== 'object' ||
-    typeof (parsed as Cursor).t !== 'string' ||
-    typeof (parsed as Cursor).i !== 'string'
-  ) {
-    throw new HttpError(400, 'INVALID_CURSOR', 'Invalid pagination cursor');
-  }
-
-  const t = new Date((parsed as Cursor).t);
-  if (Number.isNaN(t.getTime())) {
-    throw new HttpError(400, 'INVALID_CURSOR', 'Invalid pagination cursor');
-  }
-
-  return { t, i: (parsed as Cursor).i };
+  const checked=z.object({t:z.string().datetime({offset:true}),i:z.string().uuid()}).strict().safeParse(parsed);
+  if(!checked.success)throw new HttpError(400,'INVALID_CURSOR','Invalid pagination cursor');
+  return {t:new Date(checked.data.t),i:checked.data.i};
 };
 
 export const parseLimit = (raw: string | undefined): number => {

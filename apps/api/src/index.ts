@@ -1,7 +1,8 @@
+import { replicaPool } from './services/read-routing';
+import { validateRequestShape } from './middleware/validation';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
 import { env } from './env';
 import { pool } from './db';
 import { redisClient } from './redis';
@@ -25,7 +26,8 @@ const app = express();
 app.use(helmet({ frameguard: { action: 'deny' } }));
 app.use(corsMiddleware);
 app.options('*', corsMiddleware);
-app.use(express.json());
+app.use(express.json({limit:'32kb'}));
+app.use(validateRequestShape);
 
 app.get('/health', async (req, res, next) => {
   try {
@@ -47,23 +49,9 @@ app.get('/health', async (req, res, next) => {
   }
 });
 
-const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: env.AUTH_RATE_LIMIT_MAX,
-  message: { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Try again later' } }
-});
-
-// Credential-adjacent mutating endpoints: team mutations and invitations.
-const teamsLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: env.TEAMS_RATE_LIMIT_MAX,
-  message: { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Try again later' } }
-});
-const invitationsLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: env.INVITATIONS_RATE_LIMIT_MAX,
-  message: { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Try again later' } }
-});
+const apiLimiter=redisRateLimit({windowSeconds:900,max:env.AUTH_RATE_LIMIT_MAX,keyPrefix:'rl:auth',failClosed:true});
+const teamsLimiter=redisRateLimit({windowSeconds:900,max:env.TEAMS_RATE_LIMIT_MAX,keyPrefix:'rl:teams',failClosed:true});
+const invitationsLimiter=redisRateLimit({windowSeconds:900,max:env.INVITATIONS_RATE_LIMIT_MAX,keyPrefix:'rl:invitations',failClosed:true});
 
 app.use('/auth', apiLimiter, authRouter);
 app.use('/teams', teamsLimiter, teamsRouter);
@@ -95,6 +83,7 @@ const shutdown = async () => {
       console.log('HTTP server closed.');
     });
   }
+  await replicaPool?.end();
   await pool.end();
   await redisClient.quit();
   process.exit(0);

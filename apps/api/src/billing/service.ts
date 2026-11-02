@@ -261,7 +261,7 @@ export const assertCanGrow = async (
   extra: number
 ): Promise<void> => {
   const { sub, plan } = await materializeSubscription(client, teamId, now);
-  if (sub.status !== SubscriptionStatus.ACTIVE) {
+  if (sub.status !== SubscriptionStatus.ACTIVE && !(sub.status === SubscriptionStatus.PAST_DUE && sub.grace_ends_at && new Date(sub.grace_ends_at)>now)) {
     throw new HttpError(
       403,
       'SUBSCRIPTION_REQUIRED',
@@ -290,7 +290,7 @@ export const assertSubscriptionActive = async (
   now: Date
 ): Promise<void> => {
   const { sub } = await materializeSubscription(client, teamId, now);
-  if (sub.status !== SubscriptionStatus.ACTIVE) {
+  if (sub.status !== SubscriptionStatus.ACTIVE && !(sub.status === SubscriptionStatus.PAST_DUE && sub.grace_ends_at && new Date(sub.grace_ends_at)>now)) {
     throw new HttpError(
       403,
       'SUBSCRIPTION_REQUIRED',

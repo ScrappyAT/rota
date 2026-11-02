@@ -1,5 +1,6 @@
-import { Router } from 'express';
-import rateLimit from 'express-rate-limit';
+import { Router,Response,NextFunction } from 'express';
+import { sensitiveLimit } from '../middleware/rate-limit-redis';
+import { CreateInvitationSchema,RedeemInvitationSchema } from '@rota/shared';
 import { pool } from '../db';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { requireRole } from '../middleware/tenant';
@@ -23,29 +24,14 @@ const router = Router();
 router.use(authenticate);
 
 // Dedicated rate limiter on invitation acceptance to prevent brute-force attacks
-const acceptLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 15, // 15 attempts per 15 minutes per IP
-  message: {
-    success: false,
-    error: {
-      code: 'TOO_MANY_REQUESTS',
-      message: 'Too many invitation redemption attempts. Please try again later.',
-    },
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
+const acceptLimiter=sensitiveLimit('invite-accept',15);
+router.use(sensitiveLimit('invite-user',100));
 
 // Create invitation
 router.post('/team/:teamId', requireRole([Roles.OWNER, Roles.MANAGER]), async (req: AuthRequest, res, next) => {
   try {
-    const { email, role } = req.body;
-    const teamId = req.params.teamId;
-
-    if (!email || !role || !Object.values(Roles).includes(role)) {
-      return res.status(400).json({ success: false, error: { code: 'BAD_REQUEST', message: 'Invalid payload' } });
-    }
+    const {email,role}=CreateInvitationSchema.parse(req.body);
+    const teamId=req.params.teamId;
 
     const client = await pool.connect();
     try {
@@ -137,7 +123,7 @@ router.get('/team/:teamId', requireRole([Roles.OWNER, Roles.MANAGER]), async (re
 });
 
 // Accept invitation
-router.post('/accept', acceptLimiter, async (req: AuthRequest, res, next) => {
+router.post('/accept', acceptLimiter, async (req: AuthRequest, res:Response, next:NextFunction) => {
   try {
     const userId = req.user!.id;
     const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
@@ -153,7 +139,8 @@ router.post('/accept', acceptLimiter, async (req: AuthRequest, res, next) => {
       });
     }
 
-    const rawCode = req.body.code ?? req.body.token;
+    const input=RedeemInvitationSchema.parse(req.body);
+    const rawCode = input.code ?? input.token;
     if (!rawCode || typeof rawCode !== 'string') {
       return res.status(400).json({
         success: false,

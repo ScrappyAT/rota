@@ -10,6 +10,13 @@ const envSchema = z
     PORT: z.string().default('3000'),
     NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
     DATABASE_URL: z.string().url(),
+    READ_DATABASE_URL: z.string().url().optional(),
+    DB_POOL_MAX: z.coerce.number().int().min(1).max(30).default(10),
+    AUTH_MAIL_KEY: z.string().regex(/^[a-fA-F0-9]{64}$/).optional(),
+    AUTH_LINK_BASE: z.string().url().default('rota://action'),
+    MAIL_API_URL: z.string().url().default('https://api.resend.com/emails'),
+    MAIL_API_KEY: z.string().optional(),
+    MAIL_FROM: z.string().optional(),
     REDIS_URL: z.string().url(),
     JOB_QUEUE_NAME: z.string().regex(/^[a-zA-Z0-9_-]+$/).default('rota-jobs'),
     JOB_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(5),
@@ -65,6 +72,9 @@ const envSchema = z
   })
   .superRefine((cfg, ctx) => {
     if (cfg.NODE_ENV !== 'production') return;
+    if (!cfg.AUTH_MAIL_KEY || !cfg.MAIL_API_KEY || !cfg.MAIL_FROM || !cfg.MAIL_API_URL.startsWith('https://')) {
+      ctx.addIssue({code: z.ZodIssueCode.custom, path: ['AUTH_MAIL_KEY'], message: 'Production auth mail needs a 32-byte key, HTTPS provider, API key and verified sender'});
+    }
     if (!process.env.JWT_SECRET) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

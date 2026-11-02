@@ -18,6 +18,7 @@ jest.mock('../src/redis', () => ({
     isReady: true,
     connect: jest.fn(),
     quit: jest.fn(),
+    eval: jest.fn(),
     incr: jest.fn(),
     expire: jest.fn(),
   },
@@ -166,7 +167,7 @@ describe('Redis-backed rate limiter', () => {
 
   it('returns 429 after the budget is exhausted', async () => {
     let counter = 0;
-    (redisClient.incr as jest.Mock).mockImplementation(async () => {
+    (redisClient.eval as jest.Mock).mockImplementation(async () => {
       counter += 1;
       return counter;
     });
@@ -182,7 +183,7 @@ describe('Redis-backed rate limiter', () => {
   });
 
   it('fails open when Redis is unavailable', async () => {
-    (redisClient.incr as jest.Mock).mockRejectedValue(new Error('redis down'));
+    (redisClient.eval as jest.Mock).mockRejectedValue(new Error('redis down'));
     (redisClient.expire as jest.Mock).mockResolvedValue(1);
 
     const mini = limiterApp();

@@ -1,7 +1,7 @@
 # Security Architecture
 
 ## Authentication
-- Passwords are encrypted using standard `bcrypt` algorithms.
+- Passwords are hashed using `bcrypt` (they are not reversibly encrypted).
 - JWT Access tokens are short-lived (15 minutes).
 - Refresh tokens are long, cryptographically random strings stored as hashes in the database.
 - Refresh tokens are rotated on every use and explicitly revoked upon logout.
@@ -56,8 +56,8 @@
 - **Swap create** requires the requester to be assigned to the (active) shift;
   a proposed replacement must be a team member, and only one `PENDING` request
   per (shift, requester) is allowed (409 `SWAP_EXISTS`).
-- **Swap approve/reject** is restricted to `OWNER`/`MANAGER` or the proposed
-  replacement. Approval re-checks membership and assignment state *inside the
+- **Swap approve** requires `OWNER`/`MANAGER`; rejection also permits the
+  proposed replacement. Approval re-checks membership and assignment state *inside the
   transaction* (409 on stale state), then reads-modifies-writes:
   remove requester assignment → insert replacement assignment → mark swap
   `APPROVED` → record `SWAP_APPROVED`. All or nothing.
@@ -66,3 +66,45 @@
   against a fixed allow-list before hitting the database.
 - Input validation is Zod-only; SQL is parameterized; no paths concatenate
   user input into SQL.
+
+
+## R3 security model and compatibility
+
+- Credential rows lock in user-first order; refresh rotation/replay and
+  logout-all commit atomically. Access JWTs use HS256 and expire in 15 minutes.
+  Each request checks the primary auth_version and session revocation state.
+- A duplicated refresh is treated as replay even if caused by a network race.
+  One rotation may succeed but its descendants are revoked by the duplicate.
+  The mobile startup and automatic-refresh paths now share one in-flight
+  promise; cross-process duplicate attempts still require signing in again.
+- Pre-R3 access tokens without av/sid are accepted only while auth_version=0;
+  legacy opaque bcrypt refresh tokens acquire a session on first use. Global
+  revocation invalidates old access tokens immediately. A legacy access JWT
+  cannot be revoked individually; it expires within 15 minutes, or logout-all
+  can revoke it immediately. No historical refresh rows are deleted/migrated.
+- Password reset/magic tokens contain 256 random bits, store only SHA-256
+  digests in auth_action_tokens and expire after 15 minutes. Consumption is
+  atomic under the user lock. Reset invalidates all sessions and outstanding
+  action tokens. New requests invalidate previously issued same-purpose links.
+- Email requests use the same encrypted enqueue path/status for unknown users.
+  Known/unknown login performs bcrypt work and returns a generic invalid-login
+  response. Rate-limit keys hash normalized principals; forged proxy headers
+  are ignored by the production app's default trust-proxy policy.
+- AUTH_EMAIL payloads use AES-256-GCM with random 96-bit IVs and a separate
+  server key. Keep AUTH_MAIL_KEY stable while queued deliveries exist; key-ring
+  rotation/retention tooling remains an operational gap. Tokens are never
+  returned in JSON or logged. Prefer owned verified HTTPS app links in a future
+  mobile release; the existing rota scheme can be claimed by another app.
+- Redis sensitive quotas fail closed; INCR/expiry run in one Lua script. API
+  retries, invite redemption, reset/links, payment intent/verification and
+  provider webhooks retain independent quota namespaces. Configure trusted
+  proxy topology explicitly before deployment; blindly trusting client
+  X-Forwarded-For would bypass IP quotas.
+- Read replicas cannot authorize users or settle payments. Primary-only
+  permission checks occur before potentially cached tenant reads. Durable
+  user write leases bypass stale caches. There is no automatic write failover.
+- Request byte/collection/depth caps mitigate constrained-collection abuse in
+  the retained Zod 3 dependency. This does not remove its npm advisory; the
+  upstream patch requires a major version migration and remains tracked.
+
+Verification and dependency disposition: [R3 report](R3-IMPLEMENTATION-REPORT.md).
