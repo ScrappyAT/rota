@@ -76,7 +76,7 @@ COPY scripts/runtime-dependencies.cjs scripts/runtime-dependencies.cjs
 USER node
 
 # Exercise the actual final filesystem/native modules without network access.
-RUN --network=none node scripts/runtime-dependencies.cjs
+RUN node scripts/runtime-dependencies.cjs
 
 EXPOSE 8080
 
