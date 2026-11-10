@@ -190,3 +190,33 @@ MANUAL_REVIEW after the bounded verification budget while remaining PENDING for
 later legitimate settlement. R1 prices, separate-floor formulas, currency fences,
 ledger and late-payment revision safeguards remain unchanged. Migration 008
 preservation evidence and all worker guarantees: `R2-IMPLEMENTATION-REPORT.md`.
+
+## Graduation Phase 1 renewal lifecycle correction
+
+One grace window is allowed per unpaid service period. Its start is the first
+verified terminal renewal failure, using the worker's evaluation time; its end
+is that time plus SUBSCRIPTION_GRACE_DAYS (default 14 days). Renewal before,
+exactly at, or after period expiry follows this rule. An unavailable provider,
+verification mismatch or nonterminal result does not count as a confirmed
+failure. Replaying an intent/event does not create another initialization,
+failure event, grace job or owner failure notice. An explicitly different
+idempotency key remains a distinct authorized payment intent, not an automatic
+retry. No automatic second charge is introduced.
+
+Repeated failed attempts, including after the grace deadline, retain the first
+failure time/deadline. Scheduled downgrades and zero-due changes cannot erase
+them. Grace expiration keeps the existing protected-write restrictions and read
+access; successful verified renewal starts a fresh paid period and clears the
+old failure markers. No broader blanket account freeze is added.
+
+Pending renewal confirmation can arrive after passive expiry/grace revisions.
+The immutable STATE history must contain every revision from the quoted revision
+through the current one, with unchanged plan/seats/period and only passive status
+or first-failure transitions in between. Only then may it recover the same
+service period. A new paid period, scheduled/configuration change, missing
+snapshot or newer paid change retains R1's superseded-payment credit path.
+Legacy no-revision failures also check for a newer paid change. Existing exact
+prices, currency fences, ledger mutation guards and provider claim fence remain.
+
+No migration is needed. See `ROTA-GRADUATION-PHASE-1-REPORT.md` for executed
+verification and remaining operational limitations.

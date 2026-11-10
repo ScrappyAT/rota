@@ -2,6 +2,9 @@ node_modules
 **/dist
 **/node_modules
 .git
+.r1-test-cache
+.agents
+.codex
 .expo
 .github
 .idea

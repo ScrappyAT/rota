@@ -20,7 +20,7 @@ const NotificationContext = createContext<NotificationContextValue>({
 });
 
 export function NotificationProvider({ children }: { children: React.ReactNode }) {
-  const { user } = useAuth();
+  const { user, readOnlySession } = useAuth();
   const { selectTeam } = useTeam();
   const selectTeamRef=useRef(selectTeam);
   selectTeamRef.current=selectTeam;
@@ -38,7 +38,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       return;
     }
 
-    if (!user?.id) {
+    if (!user?.id || readOnlySession) {
       setPushToken(null);
       setIsRegistered(false);
       return;
@@ -60,10 +60,11 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         // Automatically refresh active queries so the schedule/swaps update
         queryClient.invalidateQueries({ queryKey: ['shifts'] });
         queryClient.invalidateQueries({ queryKey: ['swaps'] });
+        queryClient.invalidateQueries({ queryKey: ['swap-request'] });
         queryClient.invalidateQueries({ queryKey: ['activity'] });
       });
-    } catch (err) {
-      console.warn('[push] Failed to add foreground notification listener:', err);
+    } catch {
+      console.warn('[push] Operation unavailable');
     }
 
     // 3. Set up notification response listener (user tapped notification)
@@ -74,8 +75,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
           void handleNotificationPayload(data,selectTeamRef.current);
         }
       );
-    } catch (err) {
-      console.warn('[push] Failed to add notification response listener:', err);
+    } catch {
+      console.warn('[push] Operation unavailable');
     }
 
     // 4. Handle cold launch from a notification (terminated state)
@@ -86,8 +87,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
           void handleNotificationPayload(data,selectTeamRef.current);
         }
       });
-    } catch (err) {
-      console.warn('[push] Failed to check last notification response:', err);
+    } catch {
+      console.warn('[push] Operation unavailable');
     }
 
     // Clean up listeners on user change or unmount to avoid duplicates
@@ -102,7 +103,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         responseSubRef.current = null;
       }
     };
-  }, [user?.id]);
+  }, [user?.id, readOnlySession]);
 
   return (
     <NotificationContext.Provider value={{ pushToken, isRegistered }}>

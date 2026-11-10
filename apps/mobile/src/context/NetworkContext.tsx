@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { apiClient } from '../api/client';
+import { onlineManager } from '@tanstack/react-query';
+import { useAuth } from './AuthContext';
 import { queryClient } from '../query/queryClient';
 
 interface NetworkContextType {
@@ -14,13 +16,14 @@ const NetworkContext = createContext<NetworkContextType>({
 
 export function NetworkProvider({ children }: { children: React.ReactNode }) {
   const [isOffline, setIsOffline] = useState(false);
+  const { readOnlySession } = useAuth();
   const wasOffline = useRef(false);
 
   const checkConnection = useCallback(async (): Promise<boolean> => {
     try {
       const res = await apiClient.getHealth();
       const online = Boolean(res.success);
-      setIsOffline(!online);
+      setIsOffline(!online); onlineManager.setOnline(online);
       return online;
     } catch {
       setIsOffline(true);
@@ -28,10 +31,12 @@ export function NetworkProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  useEffect(() => { void checkConnection(); }, [checkConnection]);
+
   // Listen to live API client network success/failure
   useEffect(() => {
     const unsubscribe = apiClient.onNetworkStatusChange((isOnline) => {
-      setIsOffline(!isOnline);
+      setIsOffline(!isOnline); onlineManager.setOnline(isOnline);
     });
     return unsubscribe;
   }, []);
@@ -43,6 +48,8 @@ export function NetworkProvider({ children }: { children: React.ReactNode }) {
       queryClient.invalidateQueries({ queryKey: ['shifts'] });
       queryClient.invalidateQueries({ queryKey: ['shift'] });
       queryClient.invalidateQueries({ queryKey: ['members'] });
+      queryClient.invalidateQueries({ queryKey: ['teams'] });
+      queryClient.invalidateQueries({ queryKey: ['settings'] });
     }
     wasOffline.current = isOffline;
   }, [isOffline]);
@@ -62,7 +69,7 @@ export function NetworkProvider({ children }: { children: React.ReactNode }) {
   }, [isOffline, checkConnection]);
 
   return (
-    <NetworkContext.Provider value={{ isOffline, checkConnection }}>
+    <NetworkContext.Provider value={{ isOffline: isOffline || readOnlySession, checkConnection }}>
       {children}
     </NetworkContext.Provider>
   );

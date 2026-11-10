@@ -24,8 +24,8 @@ if (Platform.OS !== 'web') {
         shouldShowList: true,
       }),
     });
-  } catch (err) {
-    console.warn('[push] Failed to set notification handler:', err);
+  } catch {
+    console.warn('[push] Operation unavailable');
   }
 }
 
@@ -60,8 +60,8 @@ export async function setupNotificationChannels(): Promise<void> {
       vibrationPattern: [0, 250, 250, 250],
       lightColor: '#0052CC',
     });
-  } catch (err) {
-    console.warn('[push] Failed to set notification channels:', err);
+  } catch {
+    console.warn('[push] Operation unavailable');
   }
 }
 
@@ -88,7 +88,7 @@ export async function registerForPushNotificationsAsync(userId: string): Promise
     }
 
     if (finalStatus !== 'granted') {
-      console.log(`[push] Notification permission not granted (status: ${finalStatus})`);
+      console.warn('[push] Operation unavailable');
       return null;
     }
 
@@ -109,8 +109,6 @@ export async function registerForPushNotificationsAsync(userId: string): Promise
       return null;
     }
 
-    const maskedToken = token.length > 12 ? `${token.slice(0, 10)}...` : '***';
-
     // 5. Check if already registered for this user
     const cacheKey = `push_token:${userId}:device`;
     const cachedToken = await AsyncStorage.getItem(cacheKey);
@@ -129,16 +127,15 @@ export async function registerForPushNotificationsAsync(userId: string): Promise
     if (res.success) {
       await AsyncStorage.setItem(cacheKey, token);
       await authStorage.setItemAsync('devicePushToken', token);
-      console.log(`[push] Registered device token: ${maskedToken} (platform: ${platform})`);
+      console.warn('[push] Operation unavailable');
     } else {
-      console.warn(`[push] Backend registration failed:`, res.error?.message);
+      console.warn('[push] Operation unavailable');
     }
 
     return token;
-  } catch (err) {
+  } catch {
     // Graceful handling for missing native modules or network failures
-    const message = err instanceof Error ? err.message : String(err);
-    console.warn('[push] Push notification setup unavailable:', message);
+    console.warn('[push] Operation unavailable');
     return null;
   }
 }
@@ -151,16 +148,12 @@ export async function unregisterCurrentDevice(): Promise<void> {
   try {
     const token = await authStorage.getItemAsync('devicePushToken');
     if (token) {
-      const maskedToken = token.length > 12 ? `${token.slice(0, 10)}...` : '***';
-      console.log(`[push] Unregistering device token: ${maskedToken}`);
+      console.warn('[push] Operation unavailable');
       await unregisterDevice(token);
       await authStorage.deleteItemAsync('devicePushToken');
     }
-  } catch (err) {
-    console.warn(
-      '[push] Unregister device token failed (best-effort):',
-      err instanceof Error ? err.message : String(err)
-    );
+  } catch {
+    console.warn('[push] Device cleanup unavailable');
   }
 }
 

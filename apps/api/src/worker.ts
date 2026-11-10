@@ -1,8 +1,11 @@
 import { pool } from './db';
+import { initializeErrorTracking, captureFailure, installFatalErrorHandlers } from './services/error-tracking';
+import { logEvent } from './services/observability';
 import { redisClient } from './redis';
 import { env } from './env';
 import { createJobQueue, dispatchOutbox, startJobWorker } from './services/job-runtime';
 export const runWorker = async () => {
+  initializeErrorTracking();
   await redisClient.connect();
   const queue = createJobQueue();
   const worker = startJobWorker(pool);
@@ -15,7 +18,8 @@ export const runWorker = async () => {
       await dispatchOutbox(pool, queue);
     }
     catch {
-      console.error(JSON.stringify({ source: 'jobs', event: 'outbox-poll-error' }));
+      logEvent('worker.poll_error', { outcome: 'unexpected' }, 'error');
+      captureFailure();
     }
     finally {
       polling = false;
@@ -30,8 +34,9 @@ export const runWorker = async () => {
   return { close };
 };
 if (require.main === module) {
+  installFatalErrorHandlers();
   runWorker().then(({ close }) => {
     process.once('SIGTERM', () => { void close(); });
     process.once('SIGINT', () => { void close(); });
-  }).catch(() => { console.error('Worker could not start'); process.exitCode = 1; });
+  }).catch(() => { logEvent('process.error', { outcome: 'unexpected' }, 'error'); captureFailure(); process.exitCode = 1; });
 }

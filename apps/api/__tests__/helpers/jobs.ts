@@ -7,12 +7,14 @@ export const drainTestJobs = async (kinds: JobKind[], max = 200) => {
   if (url.hostname !== '127.0.0.1' || url.port !== '5540' || url.pathname !== '/rota_r1_test')
     throw new Error('Disposable test server required');
   for (let round = 0;round < max;round++) {
-    const rows = (await pool.query("SELECT id FROM job_outbox WHERE kind=ANY($1::text[]) AND payload->>'receiptCheck' IS DISTINCT FROM 'true' AND status IN ('PENDING','QUEUED') AND available_at<=NOW() ORDER BY sequence LIMIT 1", [kinds])).rows;
+    const rows = (await pool.query("SELECT id,clock_timestamp() AS evaluated_at FROM job_outbox WHERE kind=ANY($1::text[]) AND payload->>'receiptCheck' IS DISTINCT FROM 'true' AND status IN ('PENDING','QUEUED') AND available_at<=NOW() ORDER BY sequence LIMIT 1", [kinds])).rows;
     if (!rows.length)
       return;
     // Failures stay in the durable attempt log for assertions; no implicit repeated tries here.
     try {
-      await processOutboxJob(pool, rows[0].id);
+      // Match the database clock that determined this row was due. The production
+      // worker is unchanged; injecting this time avoids WSL/host skew in fast drains.
+      await processOutboxJob(pool, rows[0].id, rows[0].evaluated_at);
     }
     catch {
       return;

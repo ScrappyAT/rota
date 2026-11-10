@@ -1,59 +1,62 @@
-# Graduation Submission Checklist
+# Rota graduation submission evidence
 
-Single list of everything still needed to close out the October graduation,
-with exact commands and pointers to the evidence each item produces.
+Reviewed 10 November 2026 against the original Dev & Design HQ PDF, Part 2 Task A
+and page 34. This replaces the outdated pre-publication checklist. Completion of
+an artifact and availability of its submission link are separate facts.
+No remote submission, publication or deployment is performed in this phase.
 
-Legend: ✅ done (verified run output) · 🟡 ready/in-progress · ⬜ not done
-
-## Code & evidence
-
-| Item | Status | Evidence / notes |
+| Required evidence | Current evidence | Remaining action |
 |---|---|---|
-| Push notification backend | ✅ | 127/127 API tests pass; `docs/IMPLEMENTATION-STATUS.md` |
-| Mobile push wiring (device registration, preferences, receipt) | 🟡 | Being implemented in `apps/mobile` (separate workstream) |
-| Load-testing harness | ✅ | `k6/**` scripts + `docs/PERFORMANCE-TESTING.md` |
-| Load-test **execution** + recorded results | ⬜ | k6 not installed on this machine yet. Install (`choco install k6` or `winget install k6.k6`), then run per `docs/PERFORMANCE-TESTING.md` and fill the results table. |
-| Docker image build | 🟡 | `Dockerfile` written; validate with `docker build -t rota-api .` |
-| Git remote + initial push | ⬜ | Repo has no remote/commits yet. Create the GitHub repo, then (once the user requests it) `git remote add origin <url>` and push. |
-| EAS production build | ⬜ | Needs `EXPO_PUBLIC_API_URL` pointed at the deployed host, then `EXPO_PUBLIC_API_URL=https://<host> npx eas-cli build --profile production --platform android` from `apps/mobile`. |
-| Demo video | ⬜ | Blocked on the deployed host being reachable from the phone during recording. |
+| Public source | [ScrappyAT/rota](https://github.com/ScrappyAT/rota); R1/R2/R3 merged per user and local main | Integrated locally on the release branch; approved publication still needed |
+| Android build | [New integrated preview APK](https://expo.dev/artifacts/eas/r197ay-RMlQSdm-zTC_w1I4b_gD85C3_c0NBXPBYi8w.apk) — Expo build FINISHED10 November2026 | Physical Android acceptance still required; old link404 replaced |
+| Backend | Railway existed and attempted main deployment; missing-redis runtime repair is separately implemented/tested locally | Confirm approved repaired API + separate worker rollout and a reachable endpoint; no current uptime claim |
+| Architecture diagram/docs | [ARCHITECTURE.md](ARCHITECTURE.md), [SECURITY.md](SECURITY.md), [SHARDING.md](SHARDING.md), [LEARNING-LOG.md](LEARNING-LOG.md), [OBSERVABILITY.md](OBSERVABILITY.md) | Reconcile shared docs when integrating all worktrees |
+| Automated tests | Final integrated release478/44 passed; TypeScript/lint/builds and final Docker smoke passed; see release report | Publish exact final integrated verification rather than reusing an older total |
+| 10k data / cursor/index evidence | large-dataset tests; [PAGINATION.md](PAGINATION.md) before/after plans | Existing evidence; new load/EXPLAIN execution is not claimed here |
+| 200-VU before/after cache report | [load-tests/REPORT.md](../load-tests/REPORT.md), [PERFORMANCE-REPORT.md](PERFORMANCE-REPORT.md) | Historical executed evidence retained; disclose missed harness latency thresholds |
+| Three-minute demo | **Recording completed 14 October 2026**, per user and central submission | **Public shareable URL missing**; check access and assessment coverage. Do not mark recording as unrecorded |
+| LinkedIn engineering post | **Published** [existing post](https://lnkd.in/p/edPwxhTV), HTTP 200 redirect confirmed | Preserve completion; a new post is not a blocker |
+| Portfolio Rota case study | [Portfolio](https://samuel-emmanuel-portfolio.vercel.app/) HTTP 200; no Rota text found in homepage HTML; central submission lists three other projects | Publish/link a dedicated Rota case study; homepage check is not an exhaustive crawl. [Repo draft](ROTA-CASE-STUDY.md) is not a published portfolio page |
+| Production store billing explanation | README covers Rota digital subscriptions and Matinee physical cinema tickets | Re-evaluate store/program/region eligibility before enabling production checkout |
+| Central submission | [final-task-samuel-emmanuel/SUBMISSION.md](https://github.com/ScrappyAT/final-task-samuel-emmanuel/blob/main/SUBMISSION.md) read through GitHub connector | Update Rota's 236-test historical count, broken APK, video URL, backend and case-study links after review; other assessment parts unchanged |
 
-## Release prerequisites
+## Final sign-off sequence
 
-| Item | Status | Notes |
-|---|---|---|
-| Flutterwave test (sandbox) keys | ⬜ | `FLW_SECRET_KEY`, `FLW_PUBLIC_KEY`, `FLW_SECRET_HASH` from https://dashboard.flutterwave.com. Never commit; set only in the deployed service vars. |
-| Production JWT secrets | ⬜ | Generate: `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"`. Set `JWT_SECRET` (+ `JWT_REFRESH_SECRET`) in the service. |
-| `CORS_ORIGIN` allow-list | ⬜ | Must be non-`*` in production (enforced by `apps/api/src/env.ts`). |
-| Provision Railway project (Postgres + Redis + API) | ⬜ | Walkthrough in `docs/DEPLOYMENT.md`. Never provision until the user instructs it. |
-| Deploy + post-deploy checks | ⬜ | `docker build`, `curl /health`, `k6 run k6/health.js`. |
+- [ ] Review the integrated release diff and original phase reports; docs are reconciled locally.
+- [ ] Run final integrated serial PostgreSQL/Redis tests, TypeScript, lint, builds
+      and the repaired final-image dependency/HTTP smoke test with explicit approval.
+- [ ] Review serialized release migration plan, worker topology, PORT 8080 and
+      provider/telemetry configuration without placing secrets in source or Expo.
+- [ ] Complete physical Android acceptance for current changes, including cold/
+      warm links, offline restoration, swaps, two-device settings and quiet hours.
+- [ ] Obtain authorized sandbox Flutterwave USD proof and mocked-to-live staging
+      mail/push/error-monitoring evidence. Flutterwave is already allowed; no
+      replacement provider is required by the assignment.
+- [x] Supply the new working Android APK download.
+- [ ] Supply a reachable backend, recorded demo's
+      share URL and dedicated Rota case-study URL into central submission.
+- [ ] Check public/incognito access to every final link and submit per page 34.
 
-## After deploy (in order)
+Physical WAL replication, a particular calendar/virtual-list library, replay
+recording, native crash analytics and optional stretch enhancements are not
+added as graduation blockers. Required app/server JS error integration exists
+locally; live ingestion and rollout remain operational verification.
 
-```bash
-# 1. Smoke the live API
-curl -s https://<host>/health
 
-# 2. Run the load suite against the deployment
-k6 run k6/health.js   -e BASE_URL=https://<host>
-k6 run k6/workload.js -e BASE_URL=https://<host> -e USER_EMAIL=... -e USER_PASSWORD=... -e TEAM_ID=...
-k6 run k6/cursor-walk.js -e BASE_URL=https://<host> -e USER_EMAIL=... -e USER_PASSWORD=... -e TEAM_ID=...
-# rate-limit.js LAST, against a disposable instance (it exhausts the IP budget)
+## November10 final release update
 
-# 3. Fill the results table in docs/PERFORMANCE-TESTING.md from k6 summaries
+The actual integrated candidate passed478 tests across44 suites; TypeScript,
+lint, shared/API builds, final-image imports (including @sentry/node), peer HTTP
+health8080 and separate-worker durable execution passed. Initial partial-run
+worker timeout is disclosed in [release report](GRADUATION-RELEASE-REPORT.md).
 
-# 4. Build the mobile artifact against the live host, record demo video
-```
+[APK build progress](https://expo.dev/accounts/scrappy4rls-team/projects/rota/builds/947dc9d2-f999-43a8-b3e4-3b9a4c8a23cf)
+uses the existing Expo Android signing key and matching ignored Firebase config.
+Build FINISHED; [download the installable APK](https://expo.dev/artifacts/eas/r197ay-RMlQSdm-zTC_w1I4b_gD85C3_c0NBXPBYi8w.apk).
+Native compilation/signing succeeded. Physical-device verification remains open.
 
-## Close-out
-
-- [ ] All three gates green on the final tree: `npm run typecheck`, `npm run lint`, `npm test`.
-- [ ] k6 thresholds pass on the deployed host; results recorded (no fabricated numbers).
-- [ ] `docs/IMPLEMENTATION-STATUS.md` "Validation history" updated with final runs.
-- [ ] GitHub repo has the full history committed and pushed.
-
-## Status of this document
-
-Compiled as part of the deployment-pack task. Nothing here claims to have
-executed outside the repo. Any item marked ✅ was run in this workspace's
-earlier validation sessions (127 API tests) or is a committed artifact.
+Intended backend: https://rota-production-84ef.up.railway.app (/health404 observed).
+User reports trial expires11 November, no upgrade. Live service settings and
+remaining credit are not verified. Deployment still requires explicit approval.
+Central SUBMISSION.md is updated locally, not pushed. Demo recording and published
+LinkedIn remain completed; demo URL and dedicated portfolio page are still needed.

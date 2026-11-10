@@ -217,3 +217,54 @@ These are non-negotiable. Any endpoint touching team data must satisfy them:
   existing sharding simulation and R1/R2 accounting/durable-delivery rules.
 - No R3 commit, push, merge, deployment, real payments/push/mail or R4 work
   before the user's review.
+
+
+## Graduation Phase 3 observability
+
+- Dedicated branch/worktree; preserve the uncommitted Railway, Phase 1 and Phase 2 checkouts.
+- `services/observability.ts` emits fixed JSON events through the shared telemetry allowlist.
+  Never log request bodies, headers, raw URLs, exception messages/stacks, token fragments,
+  cache keys, email addresses or job/provider payloads. New fields require privacy tests.
+- Optional SENTRY_DSN (API/worker) and EXPO_PUBLIC_SENTRY_DSN (mobile) must be empty in tests.
+  Mobile DSN is a public ingestion identifier, never a private auth/source-map upload token.
+  Native crashes, screenshots, replays, SDK console capture, tracing and automatic PII are disabled.
+- `npm run test:graduation:phase3` uses only docker-compose.phase3-tests.yml services
+  at 5540/6480/5541/5542/5543, dummy providers and an in-memory SDK test transport.
+  Run serially. Stop only this stack when finished; never delete containers or volumes.
+- No migrations or financial/authentication rules may be changed for observability.
+  See docs/OBSERVABILITY.md and docs/ROTA-GRADUATION-PHASE-3-REPORT.md for evidence boundaries.
+
+
+## Railway runtime packaging repair
+
+- Preserve root and apps/api/node_modules after pruning. The lockfile places
+  redis in the API workspace; never assume every production package is hoisted.
+- Docker defaults PORT=8080 (reported Railway public target); npm development
+  stays 3000, and development DB/Redis ports remain 5440/6380.
+- Image CMD starts API only. Migrations are a separately approved serialized
+  release job; never migrate production to test packaging.
+- R2 requires a separate worker process with the same DB/Redis/queue and R3
+  encryption key. Worker-specific hosting config must omit HTTP health checks.
+- `npm run test:docker:runtime` uses an internal disposable Compose network,
+  dummy provider values and a peer HTTP client on API port 8080. It applies migrations only
+  to its own disposable DB and removes only the stack it started.
+- `scripts/runtime-dependencies.cjs` imports all API/shared production modules
+  from their workspace contexts in the final image, checks native bcrypt and
+  compiled entry points, and never starts services or sends provider requests.
+- No business-logic change or migration 001-009 edit is authorized by packaging
+  work. No commit/push/merge/deployment or R4 work before separate review.
+
+
+## November10 release integration
+
+- All four completed workstreams are integrated on the dedicated local release branch.
+  Preserve their original branches/locked worktrees and Docker resources.
+- `test:release` inspects an existing disposable schema and does not invoke the app
+  migrator. IncludeMigrationSafetyTests explicitly enables only temporary test-DB
+  migration tests. No production/application migration is authorized.
+- Use scripts/test-release-runtime.ps1 for this release. It retains every container,
+  network, database clone and volume; do not use the historical deleting smoke runner.
+- Runtime dependency enumeration includes @sentry/node automatically from API deps.
+- EAS preview is APK/internal, uses the confirmed Railway URL, and explicitly disables
+  Sentry delivery/upload. Firebase config stays ignored. No production providers or
+  remote-main merge/push/deployment/paid Railway change is authorized.

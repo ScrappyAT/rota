@@ -4,7 +4,7 @@ Rota is a mobile shift-scheduling application for small businesses such as resta
 
 ## Technology Stack
 
-- **Mobile**: Expo, React Native, TypeScript, Expo Router, NativeWind
+- **Mobile**: Expo, React Native, TypeScript, Expo Router, React Native StyleSheet
 - **Backend**: Node.js, Express, TypeScript, Zod, PostgreSQL, Redis
 - **Infrastructure**: Docker Compose for local development
 
@@ -18,14 +18,14 @@ Rota is a mobile shift-scheduling application for small businesses such as resta
 
 ## Prerequisites
 
-- Node.js (v18+)
+- Node.js 24 LTS (verified locally with 24.16; the server SDK requires a supported Node 20.19+/22.12+/23.2+ release)
 - Docker and Docker Compose (for local database and Redis)
 
 ## Local Setup
 
 1. Copy `.env.example` to `.env` in the root directory.
-2. Run `npm install` to install dependencies across workspaces.
-3. Start the databases: `npm run db:start`
+2. Run `npm ci` to install dependencies across workspaces.
+3. Build shared types: `npm run build:shared`. Start the databases: `npm run db:start`
 4. Run migrations: `npm run db:migrate`
 5. Start the backend: `npm run dev:api`
 6. Start the mobile app: `npm run dev:mobile`
@@ -39,7 +39,8 @@ Rota is a mobile shift-scheduling application for small businesses such as resta
 - `npm run build`: Compiles `packages/shared` first, then the API (same order
   the production Docker build uses).
 - `npm run db:start`: Starts PostgreSQL and Redis using Docker Compose.
-- `npm run db:stop`: Stops the Docker Compose services.
+- `npm run db:stop`: Existing script uses Compose down (removes containers). During
+  graduation verification use `docker compose -f <test-compose-file> stop` to retain them.
 - `npm run db:migrate`: Runs database migrations in the API workspace.
 - `npm run db:seed:activity`: Seed the activity feed with 10,000 rows for a
   team. Usage: `npm run db:seed:activity -- --team <team-uuid> [--count 10000]
@@ -83,38 +84,31 @@ payment attempt must never be invented to recover an ambiguous checkout.
 Details, API changes, conflict policy, failure drills and limitations:
 `docs/R2-IMPLEMENTATION-REPORT.md`.
 
-## Current Implementation Status
+## Current implementation and review boundaries
 
-Milestone R1 corrects assignment USD pricing, separate-floor proration, scheduled
-reductions, payment idempotency and the append-only financial ledger. Legacy NGN
-records remain intact. See `docs/R1-IMPLEMENTATION-REPORT.md`; the Phase 4 counts
-below describe the earlier implementation.
+R1, R2 and R3 are merged into main at `c09f925`. They provide the versioned USD
+catalog and immutable ledger; durable outbox/worker processing and settings;
+and reset/magic-link authentication, revocation, Redis quotas and read routing.
+Historical NGN records remain in their original currency.
 
+The preserved source checkouts originally held separate graduation corrections: Railway runtime
+repair (12 files), Phase 1 billing-boundary/primary-membership fixes (8 files),
+Phase 2 mobile completion (36 files), and Phase 3 observability/documentation.
+They are now integrated locally on `codex/graduation-release-2026-11-10`;
+remote main is unchanged and no deployment is claimed. The original checkouts
+remain intact. See [final release report](docs/GRADUATION-RELEASE-REPORT.md). Read
+[implementation status](docs/IMPLEMENTATION-STATUS.md) and the phase reports
+before treating local test results as release evidence.
 
-- **Phase 1** — Monorepo, shared package, Express bootstrap, Docker Compose,
-  Expo shell: complete.
-- **Phase 2** — Auth (JWT + rotating refresh tokens with reuse detection),
-  teams, role-based access control, invitations: complete and verified.
-- **Phase 3** — Shifts, shift assignments, swap requests/approvals, activity
-  feed, cursor pagination, 10k seed script, and mobile shift/swap/activity
-  screens: implemented. API behavior is covered by 43 automated tests
-  (including a live-DB suite); mobile screens type-check but have not been
-  exercised on a device.
-- **Phase 4** — Seat-based subscriptions and Flutterwave billing: plan catalog,
-  per-team subscriptions with lazy ACTIVE/PAST_DUE/EXPIRED states, prorated
-  upgrades and seat changes, renewal, payment verification and a deduplicating
-  webhook, plus owner-only mobile screens (summary, plans, history). Covered by
-  50 new automated tests (93 total); the live card flow is unverified because
-  no Flutterwave sandbox credentials were available.
-- **Push notifications** — device registration/preferences API, notification
-  ledger with deterministic dedupe, Expo push delivery, and mobile
-  registration + handlers: complete. See `docs/ARCHITECTURE.md`.
-- See `docs/IMPLEMENTATION-STATUS.md` for the full breakdown.
+The mobile test script is a stub; API-hosted tests exercise extracted mobile
+state/storage modules with native adapters mocked. Typechecking and an Android
+JavaScript bundle do not establish physical-device behavior.
 
 ## Production & Performance
 
 - **Deployment**: `Dockerfile` + `railway.json` produce a self-contained API
-  image (shared package built first, migrations run on boot). Runbook and env
+  image. The separate runtime-repair worktree corrects private workspace dependencies,
+  API-only startup and container port 8080; integrate it before rollout. Runbook and env
   reference in `docs/DEPLOYMENT.md`.
 - **Redis Caching**: Redis cache-aside layer for team roster (`GET /teams/:teamId/members`),
   shift calendar reads (`GET /teams/:teamId/shifts`), and activity feed reads
@@ -128,7 +122,7 @@ below describe the earlier implementation.
 
 ## R3 authentication, security and read routing
 
-R3 changes remain local for review. See [R3 implementation report](docs/R3-IMPLEMENTATION-REPORT.md)
+R3 is merged; its original report records the pre-publication verification. See [R3 implementation report](docs/R3-IMPLEMENTATION-REPORT.md)
 for verification, compatibility and operational boundaries.
 
 After reviewing migration 009, migrate your intended development environment
@@ -169,3 +163,94 @@ simulate lag and failure, not physical WAL replication. It raises only outer
 load budgets; dedicated sensitive-route limits remain active. Each test clears
 only limiter keys on the disposable Redis to prevent cross-test quota leakage.
 Mobile runtime, live emails, deployment and R4 are not verified by these commands.
+
+## Graduation Phase 3: observability and isolated verification
+
+Backend request logs include a generated `X-Request-ID`, authenticated UUID when
+available, normalized route/method, duration, HTTP status and outcome. Worker
+logs include job UUID/type, attempt, duration, deferral, retry and terminal state.
+See [observability and payment tracing](docs/OBSERVABILITY.md).
+
+Optional `SENTRY_DSN` enables API/worker error reporting; optional
+`EXPO_PUBLIC_SENTRY_DSN` enables mobile JavaScript reporting. Missing/malformed
+values disable delivery. The mobile DSN is a public ingestion identifier;
+**never** bundle mail/payment keys, `AUTH_MAIL_KEY`, JWT secrets or
+`SENTRY_AUTH_TOKEN`. Native crash reporting, replays, screenshots, breadcrumbs,
+SDK console capture and performance tracing are disabled. Source-map upload is
+not configured. No live Sentry event has been sent/verified in this phase.
+
+```powershell
+# Disposable ports 5540/6480/5541/5542/5543 must be free.
+docker compose -f infrastructure/docker-compose.phase3-tests.yml up -d --wait
+npm ci
+npm run build:api
+npm run test:graduation:phase3
+npm run typecheck
+npm run lint
+# Stop this stack only; retain its containers and volumes.
+docker compose -f infrastructure/docker-compose.phase3-tests.yml stop
+```
+
+The runner pins dummy credentials, non-serving localhost provider URLs and empty
+telemetry DSNs. Never run destructive suites against the normal development or
+production database. Other workstreams' test stacks use these same ports; do
+not run them concurrently. Local checks and exact combined-workstream coverage
+are recorded in [the Phase 3 report](docs/ROTA-GRADUATION-PHASE-3-REPORT.md).
+
+## Production app-store billing considerations (assessment page 14)
+
+Flutterwave is explicitly allowed by the assignment and remains the sandbox
+payment provider. Replacing it is unnecessary for graduation. A sandbox/demo
+integration does not establish app-store production compliance.
+
+Rota sells digital team scheduling access. Store distribution normally requires
+evaluating the applicable digital-subscription billing rules. Apple's enterprise
+services provision may permit access to subscriptions sold directly to
+organizations for employees; this requires an eligible distribution/purchase
+flow, not an assumption based on the word B2B. Google Play generally requires
+Play Billing for digital features unless a current exception/program applies.
+Choose store billing or a qualifying arrangement before enabling production
+checkout, including region-specific linking and subscription disclosure rules.
+
+Matinee sells cinema attendance, a physical service consumed outside the app.
+The physical-goods/services rules generally permit external payment processing
+(and Apple requires non-IAP payment for that category). Digital content or
+subscriptions added later need a separate review. This section documents both
+products as requested by the brief; no Matinee code is changed.
+
+Policy references checked 10 November 2026:
+[Apple App Review Guidelines, 3.1](https://developer.apple.com/app-store/review/guidelines/),
+[Google Play Payments policy](https://support.google.com/googleplay/android-developer/answer/9858738?hl=en).
+Recheck eligibility and current regional terms at the actual release date.
+
+## November 10 graduation release candidate
+
+The release candidate integrates the Railway runtime repair and all reviewed
+Graduation Phase1/2/3 source, tests and docs. No new product phase was started.
+Use the repaired API-only Docker CMD (PORT8080), and a separate worker process.
+`railway.worker.json` prepares worker startup with no Railway HTTP health check;
+set each service's configuration path explicitly only during an approved rollout.
+
+The intended mobile backend is https://rota-production-84ef.up.railway.app.
+Its /health returned404 during release preparation; a built APK does not imply
+that backend is online. The user reports Railway trial expiry11 November2026;
+remaining credit and live service configuration are unverified. No paid changes
+or new deployment were made.
+
+Release verification reuses the already-migrated disposable Phase3 stack:
+`npm run test:release -- -IncludeMigrationSafetyTests`. The explicit switch
+allows only the existing tests' temporary migration-safety databases. The runner
+never invokes the application migration command. Without the switch, four
+migration-invoking suites are excluded and the output must not be called a full
+478-test run. `scripts/test-release-runtime.ps1` clones the disposable database,
+checks final-image imports/HTTP/worker execution, and retains all resources.
+No migrations run on API/worker startup. Do not run the older runtime-smoke script
+under a no-deletion/no-migration restriction: its historical cleanup and migrator
+are intentionally not used for this release.
+
+See [release report](docs/GRADUATION-RELEASE-REPORT.md) for observed checks, the
+new APK build/artifact, exact dashboard prerequisites and submission actions.
+
+Installable Android APK (integrated preview,10 November2026):
+[Download APK](https://expo.dev/artifacts/eas/r197ay-RMlQSdm-zTC_w1I4b_gD85C3_c0NBXPBYi8w.apk).
+Physical-device behavior and backend availability remain unverified.

@@ -1,5 +1,6 @@
 import { useFonts } from 'expo-font';
-import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
+import { DarkTheme, DefaultTheme, Stack, ThemeProvider, ErrorBoundary as RouterErrorBoundary, ErrorBoundaryProps } from 'expo-router';
+import { initializeErrorTracking, reportMobileError, withErrorTracking } from '../src/services/errorTracking';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import 'react-native-reanimated';
@@ -8,10 +9,12 @@ import SpaceMono from '../assets/fonts/SpaceMono-Regular.ttf';
 
 import { useColorScheme } from '@/components/useColorScheme';
 
-export {
-  // Catch any errors thrown by the Layout component.
-  ErrorBoundary,
-} from 'expo-router';
+initializeErrorTracking();
+
+export function ErrorBoundary(props: ErrorBoundaryProps) {
+  useEffect(() => { reportMobileError(props.error); }, [props.error]);
+  return <RouterErrorBoundary {...props} />;
+}
 
 export const unstable_settings = {
   // Ensure that reloading on `/modal` keeps a back button present.
@@ -29,7 +32,7 @@ import { SettingsProvider,useSettings } from '../src/context/SettingsContext';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClient } from '../src/query/queryClient';
 
-export default function RootLayout() {
+function RootLayout() {
   const [loaded, error] = useFonts({
     SpaceMono,
   });
@@ -90,3 +93,5 @@ function RootLayoutNav() {
     </ThemeProvider>
   );
 }
+
+export default withErrorTracking(RootLayout);

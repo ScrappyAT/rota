@@ -1,6 +1,9 @@
 import { replicaPool } from './services/read-routing';
 import { validateRequestShape } from './middleware/validation';
 import express from 'express';
+import { requestLogging } from './middleware/request-logging';
+import { initializeErrorTracking, captureFailure, installFatalErrorHandlers } from './services/error-tracking';
+import { logEvent } from './services/observability';
 import cors from 'cors';
 import helmet from 'helmet';
 import { env } from './env';
@@ -22,7 +25,9 @@ const isDev = env.NODE_ENV !== 'production';
 const devOrigins = isDev ? DEFAULT_DEV_ORIGINS : [];
 const corsMiddleware = cors(createCorsMiddleware(env.CORS_ORIGIN, devOrigins));
 
+initializeErrorTracking();
 const app = express();
+app.use(requestLogging);
 app.use(helmet({ frameguard: { action: 'deny' } }));
 app.use(corsMiddleware);
 app.options('*', corsMiddleware);
@@ -72,7 +77,8 @@ async function startServer() {
 }
 
 if (require.main === module) {
-  startServer().catch(console.error);
+  installFatalErrorHandlers();
+  startServer().catch(() => { logEvent('process.error', { outcome: 'unexpected' }, 'error'); captureFailure(); process.exitCode = 1; });
 }
 
 // Graceful shutdown

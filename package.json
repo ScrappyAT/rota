@@ -32,7 +32,10 @@
     "test:r2": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-r2.ps1",
     "jobs:status": "npm run jobs:status -w @rota/api",
     "jobs:retry": "npm run jobs:retry -w @rota/api --",
-    "test:r3": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-r3.ps1"
+    "test:r3": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-r3.ps1",
+    "test:graduation:phase3": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-phase3.ps1",
+    "test:docker:runtime": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-docker-runtime.ps1",
+    "test:release": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-release.ps1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

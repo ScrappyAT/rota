@@ -1,6 +1,7 @@
 import { apiClient } from './client';
 import { dataOrThrow, ensureSuccess, toQuery } from './ensure';
 import { PaginatedResponse } from '@rota/shared';
+import type { SwapRequest } from './swaps';
 
 export interface Shift {
   id: string;
@@ -30,6 +31,8 @@ export interface ListOptions {
   cursor?: string;
   status?: string;
   assignedTo?: string;
+  from?: string;
+  to?: string;
 }
 
 export const fetchShifts = async (teamId: string, options: ListOptions = {}): Promise<PaginatedResponse<Shift>> => {
@@ -39,6 +42,8 @@ export const fetchShifts = async (teamId: string, options: ListOptions = {}): Pr
       cursor: options.cursor,
       status: options.status,
       assignedTo: options.assignedTo,
+      from: options.from,
+      to: options.to,
     })}`
   );
   return dataOrThrow(res);
@@ -96,8 +101,8 @@ export const requestSwap = async (
   teamId: string,
   shiftId: string,
   input: { offeredTo?: string; reason?: string }
-): Promise<unknown> => {
-  const res = await apiClient.request(`/teams/${teamId}/shifts/${shiftId}/swaps`, {
+): Promise<SwapRequest> => {
+  const res = await apiClient.request<SwapRequest>(`/teams/${teamId}/shifts/${shiftId}/swaps`, {
     method: 'POST',
     body: JSON.stringify(input),
   });

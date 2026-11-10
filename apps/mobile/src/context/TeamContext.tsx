@@ -1,103 +1,63 @@
-import { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react';
-import { authStorage } from '../storage/authStorage';
+import { createContext, useContext, useEffect } from 'react';
+import { AppState } from 'react-native';
+import { Team } from '@rota/shared';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../api/client';
 import { dataOrThrow } from '../api/ensure';
 import { useAuth } from './AuthContext';
-import { Team } from '@rota/shared';
-
+import { clearTeamCache } from '../storage/shiftCache';
+import { revokeOfflineTeam, getOfflineTeams, saveOfflineTeams, offlineEpoch } from '../storage/offlineData';
 export type TeamRole = 'OWNER' | 'MANAGER' | 'STAFF';
-
-interface TeamMember {
-  userId: string;
-  role: TeamRole;
-}
-
-interface TeamContextType {
-  teams: Team[];
-  team: Team | null;
-  role: TeamRole | null;
-  loading: boolean;
-  selectTeam: (teamId: string) => Promise<void>;
-  refreshTeams: () => Promise<void>;
-}
-
+interface TeamContextType { teams: Team[]; team: Team | null; role: TeamRole | null; loading: boolean; selectTeam: (id: string) => Promise<void>; refreshTeams: () => Promise<void> }
 const TeamContext = createContext<TeamContextType | undefined>(undefined);
-
-const SELECTED_TEAM_KEY = 'selectedTeamId';
-
 export function TeamProvider({ children }: { children: React.ReactNode }) {
-  const { user } = useAuth();
-  const [teams, setTeams] = useState<Team[]>([]);
-  const [teamId, setTeamId] = useState<string | null>(null);
-  const [roles, setRoles] = useState<Record<string, TeamRole>>({});
-  const [loading, setLoading] = useState(true);
-
-  const loadTeams = useCallback(async () => {
-    if (!user) {
-      setTeams([]);
-      setTeamId(null);
-      setRoles({});
-      setLoading(false);
-      return;
+  const { user, readOnlySession, activeTeamId, setActiveTeamId } = useAuth(), client = useQueryClient(), id = user?.id ?? '';
+  const key = ['teams', id] as const;
+  const options = { queryKey: key, staleTime: 30_000, queryFn: async ({ signal }: { signal: AbortSignal }) => {
+    const epoch = offlineEpoch();
+    const teams = dataOrThrow(await apiClient.request<Team[]>('/teams', { signal }));
+    if (signal.aborted || epoch !== offlineEpoch()) throw new Error('Discarded stale team refresh');
+    const previous = await getOfflineTeams(id);
+    for (const removed of previous.filter(t => !teams.some(next => next.id === t.id))) {
+      await revokeOfflineTeam(id, removed.id); await clearTeamCache(id, removed.id);
+      client.removeQueries({ predicate: query => query.queryKey.includes(removed.id) });
     }
-
-    try {
-      const list = dataOrThrow(await apiClient.request<Team[]>('/teams'));
-      setTeams(list);
-
-      let selected = await authStorage.getItemAsync(SELECTED_TEAM_KEY);
-      if (!selected || !list.some((t) => t.id === selected)) {
-        selected = list[0]?.id ?? null;
-        if (selected) await authStorage.setItemAsync(SELECTED_TEAM_KEY, selected);
-      }
-      setTeamId(selected);
-
-      const nextRoles: Record<string, TeamRole> = {};
-      await Promise.all(
-        list.map(async (t) => {
-          try {
-            const members = dataOrThrow(await apiClient.request<TeamMember[]>(`/teams/${t.id}/members`));
-            const me = members.find((m) => m.userId === user.id);
-            if (me && selected === t.id) nextRoles[t.id] = me.role;
-          } catch {
-            // Isolation failures hide the team; skip role resolution.
-          }
-        })
-      );
-      setRoles(nextRoles);
-    } catch {
-      setTeams([]);
-      setTeamId(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [user]);
-
+    if (!signal.aborted) await saveOfflineTeams(id, teams, offlineEpoch()); return teams;
+  } };
+  const query = useQuery({ ...options, enabled: Boolean(id) && !readOnlySession });
+  const teams = query.data ?? [];
   useEffect(() => {
-    setLoading(true);
-    loadTeams();
-  }, [loadTeams]);
-
-  const selectTeam = useCallback(async (nextId: string) => {
-    setTeamId(nextId);
-    await authStorage.setItemAsync(SELECTED_TEAM_KEY, nextId);
-    await loadTeams();
-  }, [loadTeams]);
-
-  const team = useMemo(() => teams.find((t) => t.id === teamId) ?? null, [teams, teamId]);
-  const role = teamId ? (roles[teamId] ?? null) : null;
-
-  return (
-    <TeamContext.Provider value={{ teams, team, role, loading, selectTeam, refreshTeams: loadTeams }}>
-      {children}
-    </TeamContext.Provider>
-  );
+    let active = true;
+    if (id && readOnlySession) void getOfflineTeams(id).then(saved => { if (active) client.setQueryData(key, saved); });
+    return () => { active = false; };
+  }, [id, readOnlySession, client]);
+  useEffect(() => {
+    if (!id || !query.data) return;
+    if (!activeTeamId || !teams.some(t => t.id === activeTeamId)) void setActiveTeamId(teams[0]?.id ?? null);
+  }, [id, query.data, activeTeamId]);
+  const role = useQuery({ queryKey: ['team-role', activeTeamId, id], enabled: Boolean(activeTeamId && id) && !readOnlySession,
+    queryFn: async () => { const rows = dataOrThrow(await apiClient.request<{ userId: string; role: TeamRole }[]>(`/teams/${activeTeamId}/members`)); return rows.find(m => m.userId === id)?.role ?? null; } });
+  useEffect(() => {
+    const app = AppState.addEventListener('change', state => { if (state === 'active' && id && !readOnlySession) void client.invalidateQueries({ queryKey: ['teams', id] }); });
+    const off = apiClient.onTeamAccessLost(teamId => {
+      const allowed = (client.getQueryData<Team[]>(['teams', id]) ?? []).filter(t => t.id !== teamId);
+      client.setQueryData(['teams', id], allowed);
+      client.removeQueries({ predicate: q => q.queryKey.includes(teamId) });
+      if (activeTeamId === teamId) void setActiveTeamId(allowed[0]?.id ?? null);
+      void (async () => {
+        await revokeOfflineTeam(id, teamId); await clearTeamCache(id, teamId);
+        // Keep the durable tombstone until an authoritative team refresh permits rejoining.
+      })();
+    });
+    return () => { app.remove(); off(); };
+  }, [id, readOnlySession, activeTeamId, client]);
+  const refreshTeams = async () => { if (readOnlySession) return; await client.fetchQuery({ ...options, staleTime: 0 }); };
+  const selectTeam = async (teamId: string) => {
+    let allowed = client.getQueryData<Team[]>(key) ?? [];
+    if (!readOnlySession && !allowed.some(t => t.id === teamId)) { await refreshTeams(); allowed = client.getQueryData<Team[]>(key) ?? []; }
+    if (!allowed.some(t => t.id === teamId)) throw new Error('This team is no longer available to your account');
+    await setActiveTeamId(teamId);
+  };
+  return <TeamContext.Provider value={{ teams, team: teams.find(t => t.id === activeTeamId) ?? null, role: readOnlySession ? null : role.data ?? null, loading: Boolean(id && !query.data && query.isFetching), selectTeam, refreshTeams }}>{children}</TeamContext.Provider>;
 }
-
-export function useTeam() {
-  const context = useContext(TeamContext);
-  if (!context) {
-    throw new Error('useTeam must be used within a TeamProvider');
-  }
-  return context;
-}
+export function useTeam() { const value = useContext(TeamContext); if (!value) throw new Error('TeamProvider required'); return value; }

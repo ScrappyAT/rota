@@ -1,4 +1,5 @@
 import { pool } from '../db';
+import { logEvent } from './observability';
 import { PoolClient } from 'pg';
 import { enqueueOutbox } from './outbox';
 
@@ -89,7 +90,7 @@ export const classifyExpoResponse = (payload: unknown, tokens: string[]): ExpoSe
       return;
     }
     const error = entry.details?.error ?? '';
-    log('warn', `expo ticket error for device [${maskToken(token)}]: ${error || 'UnknownError'}`);
+    logEvent('push.error', { outcome: 'unexpected' }, 'warn');
     if (PERMANENT_TOKEN_ERRORS.has(error)) {
       invalidTokens.push(token);
     }
@@ -103,15 +104,6 @@ export const formatShiftDate = (iso: string | Date): string => {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return '';
   return date.toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
-};
-
-// --- Purely internal logging (never logs raw tokens or message bodies) -----
-
-const log = (level: 'error' | 'warn' | 'info', message: string) => {
-  const line = `[notifications] ${message}`;
-  if (level === 'error') console.error(line);
-  else if (level === 'warn') console.warn(line);
-  else console.log(line);
 };
 
 // Persistence only. External delivery is exclusively a background-worker concern.

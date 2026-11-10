@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { postAuthDestination, readInvitation } from '../../src/services/invitationLinks';
+import { authStorage } from '../../src/storage/authStorage';
+import { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, Alert } from 'react-native';
 import { router } from 'expo-router';
 import { apiClient } from '../../src/api/client';
@@ -11,6 +13,7 @@ import { typography, spacing } from '../../src/components/ui/theme';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
+  useEffect(() => { void readInvitation(authStorage).then(pending => { if (pending?.email) setEmail(current => current || pending.email!); }); }, []);
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
@@ -28,7 +31,7 @@ export default function LoginScreen() {
 
     if (res.success && res.data) {
       await login(res.data);
-      router.replace('/');
+      router.replace(await postAuthDestination(authStorage));
     } else {
       Alert.alert('Login failed', res.error?.message || 'Unknown error');
     }

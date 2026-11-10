@@ -31,3 +31,7 @@ Thumbs.db
 apps/mobile/google-services.json
 
 !apps/mobile/google-services.json
+
+# Local verification artifacts must never enter cloud build archives.
+.r1-test-cache/
+infrastructure/review-worktrees/

@@ -1,3 +1,6 @@
+import { performance } from 'node:perf_hooks';
+import { logEvent } from './observability';
+import { captureFailure } from './error-tracking';
 import { Pool } from 'pg';
 import { Queue, Worker, UnrecoverableError, ConnectionOptions, Job } from 'bullmq';
 import { env } from '../env';
@@ -18,11 +21,12 @@ export const createJobQueue = (name = env.JOB_QUEUE_NAME) => {
     connection: jobRedisConnection(),
     defaultJobOptions: { attempts: env.JOB_ATTEMPTS, backoff: { type: 'exponential', delay: env.JOB_BACKOFF_MS }, removeOnComplete: { count: 1000 }, removeOnFail: false }
   });
-  queue.on('error', () => console.error(JSON.stringify({ source: 'jobs', event: 'queue-connection-error' })));
+  queue.on('error', () => { logEvent('job.connection_error', {}, 'error'); captureFailure(); });
   return queue;
 };
 /** Durable PostgreSQL status and session locks fence duplicates even after Redis loss. */
 export const processOutboxJob = async (pool: Pool, id: string, now = new Date()): Promise<void> => {
+  const started = performance.now();
   const client = await pool.connect();
   let locked = false, row: OutboxRow | undefined;
   try {
@@ -30,24 +34,28 @@ export const processOutboxJob = async (pool: Pool, id: string, now = new Date())
     if (!locked)
       throw new Error('Job is already running');
     row = (await client.query('SELECT * FROM job_outbox WHERE id=$1', [id])).rows[0];
-    if (!row || ['COMPLETED', 'DEAD'].includes(row.status))
+    if (!row || ['COMPLETED', 'DEAD'].includes(row.status)) {
+      logEvent('job.skipped', { jobId: id, jobType: row?.kind, attempt: row?.attempts, durationMs: performance.now() - started, outcome: 'duplicate' });
       return;
+    }
     if (row.available_at.getTime() > now.getTime())
       throw new DeferJob(row.available_at);
     await client.query("UPDATE job_attempts SET outcome='INTERRUPTED',finished_at=NOW() WHERE outbox_id=$1 AND finished_at IS NULL", [id]);
     const claim = await client.query("UPDATE job_outbox SET status='RUNNING',attempts=attempts+1 WHERE id=$1 RETURNING attempts", [id]);
     row.attempts = claim.rows[0].attempts;
     await client.query('INSERT INTO job_attempts(outbox_id,attempt) VALUES($1,$2)', [id, row.attempts]);
-    console.log(JSON.stringify({ source: 'jobs', event: 'attempt', id, kind: row.kind, attempt: row.attempts }));
+    logEvent('job.started', { jobId: id, jobType: row.kind, attempt: row.attempts, teamId: row.team_id, paymentId: row.payload.paymentId });
     const result = await handleOutbox(client, row, now);
     await client.query("UPDATE job_outbox SET status='COMPLETED',result=$2,completed_at=NOW(),last_error=NULL WHERE id=$1", [id, JSON.stringify(result ?? null)]);
     await client.query("UPDATE job_attempts SET outcome='COMPLETED',finished_at=NOW() WHERE outbox_id=$1 AND attempt=$2", [id, row.attempts]);
+    logEvent('job.completed', { jobId: id, jobType: row.kind, attempt: row.attempts, durationMs: performance.now() - started, teamId: row.team_id, paymentId: row.payload.paymentId, outcome: 'success' });
   }
   catch (error) {
     // A delivery-window deferral is scheduling, not a failed attempt.
     if (row && locked && error instanceof DeferJob) {
       await client.query("UPDATE job_outbox SET status='PENDING',available_at=$2,next_dispatch_at=NOW(),generation=generation+1 WHERE id=$1", [id, error.until]);
       await client.query("UPDATE job_attempts SET outcome='DEFERRED',finished_at=NOW() WHERE outbox_id=$1 AND attempt=$2", [id, row.attempts]);
+      logEvent('job.deferred', { jobId: id, jobType: row.kind, attempt: row.attempts, durationMs: performance.now() - started, retryInMs: Math.max(0, error.until.getTime() - now.getTime()), outcome: 'deferred' });
       return;
     }
     if (row && locked) {
@@ -60,7 +68,8 @@ export const processOutboxJob = async (pool: Pool, id: string, now = new Date())
       await client.query('UPDATE job_attempts SET outcome=$3,error=$4,finished_at=NOW() WHERE outbox_id=$1 AND attempt=$2', [id, row.attempts, dead ? 'DEAD' : 'RETRYABLE', code]);
       if (dead && row.kind === 'PAYMENT_RECONCILE')
         await client.query("UPDATE payment_transactions SET initialization_state='MANUAL_REVIEW' WHERE id=$1 AND status='PENDING'", [row.payload.paymentId]);
-      console.warn(JSON.stringify({ source: 'jobs', event: dead ? 'dead' : 'retry', id, attempt: row.attempts, code }));
+      logEvent(dead ? 'job.dead' : 'job.retry', { jobId: id, jobType: row.kind, attempt: row.attempts, failureCount: row.failures + 1, durationMs: performance.now() - started, retryInMs: dead ? undefined : jobBackoff(row.failures + 1), outcome: dead ? 'dead' : 'retry', paymentId: row.payload.paymentId, teamId: row.team_id }, dead ? 'error' : 'warn');
+      captureFailure({ jobId: id, jobType: row.kind, attempt: row.attempts, outcome: dead ? 'dead' : 'retry' });
       if (dead)
         throw new UnrecoverableError(code);
     }
@@ -82,7 +91,11 @@ export const dispatchOutbox = async (pool: Pool, queue: Queue): Promise<number> 
       const jobId = row.id + '-' + row.generation;
       const old = await queue.getJob(jobId);
       if (old && await old.getState() === 'failed') {
-        await pool.query("UPDATE job_outbox SET status='DEAD',last_error='BullMQ exhausted attempts or stalled recovery' WHERE id=$1 AND status NOT IN ('COMPLETED','DEAD')", [row.id]);
+        const marked = await pool.query("UPDATE job_outbox SET status='DEAD',last_error='BullMQ exhausted attempts or stalled recovery' WHERE id=$1 AND status NOT IN ('COMPLETED','DEAD') RETURNING id", [row.id]);
+        if (marked.rowCount) {
+          logEvent('job.dead', { jobId: row.id, jobType: row.kind, attempt: row.attempts, outcome: 'dead' }, 'error');
+          captureFailure({ component: 'worker', jobId: row.id, jobType: row.kind, attempt: row.attempts });
+        }
         continue;
       }
       if (!old)
@@ -91,9 +104,13 @@ export const dispatchOutbox = async (pool: Pool, queue: Queue): Promise<number> 
       count++;
     }
     catch {
-      await pool.query(`UPDATE job_outbox SET dispatch_failures=dispatch_failures+1,last_error='Redis publication failed',
+      const marked = await pool.query(`UPDATE job_outbox SET dispatch_failures=dispatch_failures+1,last_error='Redis publication failed',
         status=CASE WHEN dispatch_failures+1 >= $2 THEN 'DEAD' ELSE status END,next_dispatch_at=NOW()+($3::int*INTERVAL '1 millisecond')
-        WHERE id=$1 AND generation=$4 AND status NOT IN ('COMPLETED','DEAD')`, [row.id, env.JOB_ATTEMPTS, jobBackoff(row.dispatch_failures + 1), row.generation]);
+        WHERE id=$1 AND generation=$4 AND status NOT IN ('COMPLETED','DEAD') RETURNING status,dispatch_failures`, [row.id, env.JOB_ATTEMPTS, jobBackoff(row.dispatch_failures + 1), row.generation]);
+      if (marked.rows[0]) {
+        const dead = marked.rows[0].status === 'DEAD';
+        logEvent(dead ? 'job.dead' : 'job.dispatch_retry', { jobId: row.id, jobType: row.kind, attempt: row.attempts, failureCount: marked.rows[0].dispatch_failures, retryInMs: dead ? undefined : jobBackoff(row.dispatch_failures + 1), outcome: dead ? 'dead' : 'retry' }, dead ? 'error' : 'warn');
+      }
     }
   }
   return count;
@@ -104,9 +121,20 @@ export const startJobWorker = (pool: Pool, name = env.JOB_QUEUE_NAME, options: {
 } = {}) => {
   const worker = new Worker(name, async (job: Job<{
     outboxId: string;
-  }>) => processOutboxJob(pool, job.data.outboxId), {
+  }>) => {
+    const started = performance.now();
+    const fields = { component: 'worker', jobId: job.data.outboxId, jobType: job.name, attempt: job.attemptsMade + 1 };
+    logEvent('job.queue_started', fields);
+    try { await processOutboxJob(pool, job.data.outboxId); }
+    catch (error) {
+      // Also covers connection/lock failures before a durable PostgreSQL attempt can be claimed.
+      logEvent('job.queue_failed', { ...fields, durationMs: performance.now() - started,
+        outcome: error instanceof UnrecoverableError || job.attemptsMade + 1 >= (job.opts.attempts ?? 1) ? 'dead' : 'retry' }, 'warn');
+      throw error;
+    }
+  }, {
     connection: jobRedisConnection(true), concurrency: env.JOB_CONCURRENCY, maxStalledCount: 1, ...options,
   });
-  worker.on('error', () => console.error(JSON.stringify({ source: 'jobs', event: 'worker-connection-error' })));
+  worker.on('error', () => { logEvent('job.connection_error', {}, 'error'); captureFailure(); });
   return worker;
 };

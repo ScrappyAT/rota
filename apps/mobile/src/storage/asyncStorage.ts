@@ -51,8 +51,8 @@ export const AsyncStorage: IAsyncStorage = {
           memoryCache.set(key, content);
           return content;
         }
-      } catch (err) {
-        console.warn(`[AsyncStorage] Failed to read key ${key}:`, err);
+      } catch {
+        console.warn('[storage] Operation unavailable');
       }
     }
 
@@ -69,8 +69,8 @@ export const AsyncStorage: IAsyncStorage = {
           const filePath = `${CACHE_DIR}${sanitizeKey(key)}`;
           await FileSystem.writeAsStringAsync(filePath, value);
         }
-      } catch (err) {
-        console.warn(`[AsyncStorage] Failed to write key ${key}:`, err);
+      } catch {
+        console.warn('[storage] Operation unavailable');
       }
     }
   },
@@ -82,8 +82,8 @@ export const AsyncStorage: IAsyncStorage = {
       try {
         const filePath = `${CACHE_DIR}${sanitizeKey(key)}`;
         await FileSystem.deleteAsync(filePath, { idempotent: true });
-      } catch (err) {
-        console.warn(`[AsyncStorage] Failed to delete key ${key}:`, err);
+      } catch {
+        console.warn('[storage] Operation unavailable');
       }
     }
   },
@@ -95,8 +95,8 @@ export const AsyncStorage: IAsyncStorage = {
       try {
         await FileSystem.deleteAsync(CACHE_DIR, { idempotent: true });
         await ensureDir();
-      } catch (err) {
-        console.warn('[AsyncStorage] Failed to clear storage:', err);
+      } catch {
+        console.warn('[storage] Operation unavailable');
       }
     }
   },
@@ -115,8 +115,8 @@ export const AsyncStorage: IAsyncStorage = {
             }
           }
         }
-      } catch (err) {
-        console.warn('[AsyncStorage] Failed to list keys:', err);
+      } catch {
+        console.warn('[storage] Operation unavailable');
       }
     }
 

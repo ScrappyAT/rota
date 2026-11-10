@@ -1,0 +1,64 @@
+name: rota-runtime-smoke
+x-runtime-env: &runtime-env
+  NODE_ENV: production
+  PORT: "8080"
+  DATABASE_URL: postgres://postgres:runtime-test-only@postgres:5432/rota_runtime_smoke
+  REDIS_URL: redis://redis:6379
+  JWT_SECRET: runtime-smoke-dummy-jwt-only
+  CORS_ORIGIN: https://rota.invalid
+  FLW_ENV: sandbox
+  FLW_SECRET_KEY: runtime-smoke-dummy-only
+  FLW_SECRET_HASH: runtime-smoke-dummy-only
+  FLW_BASE_URL: http://127.0.0.1:9
+  AUTH_MAIL_KEY: "1111111111111111111111111111111111111111111111111111111111111111"
+  MAIL_API_KEY: runtime-smoke-dummy-only
+  MAIL_FROM: smoke@example.invalid
+  MAIL_API_URL: https://127.0.0.1:9
+  EXPO_PUSH_URL: http://127.0.0.1:9
+  EXPO_PUSH_RECEIPTS_URL: http://127.0.0.1:9
+  JOB_QUEUE_NAME: rota-runtime-smoke
+  JOB_POLL_MS: "100"
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_PASSWORD: runtime-test-only
+      POSTGRES_DB: rota_runtime_smoke
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U postgres -d rota_runtime_smoke"]
+      interval: 1s
+      retries: 30
+  redis:
+    image: redis:7-alpine
+    command: [redis-server, --appendonly, "yes", --maxmemory-policy, noeviction]
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 1s
+      retries: 30
+  api:
+    image: ${ROTA_RUNTIME_IMAGE:-rota-runtime-repair:local}
+    pull_policy: never
+    environment: *runtime-env
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+  migrate:
+    profiles: [tools]
+    image: ${ROTA_RUNTIME_IMAGE:-rota-runtime-repair:local}
+    pull_policy: never
+    environment: *runtime-env
+    command: [node, apps/api/dist/migrate.js]
+    healthcheck: { disable: true }
+  worker:
+    profiles: [workers]
+    image: ${ROTA_RUNTIME_IMAGE:-rota-runtime-repair:local}
+    pull_policy: never
+    environment: *runtime-env
+    command: [node, apps/api/dist/worker.js]
+    healthcheck: { disable: true }
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+networks:
+  default:
+    internal: true

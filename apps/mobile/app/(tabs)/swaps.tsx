@@ -56,6 +56,7 @@ export default function SwapsScreen() {
 
   const invalidateAll = () => {
     queryClient.invalidateQueries({ queryKey: ['swaps', teamId] });
+    queryClient.invalidateQueries({ queryKey: ['swap-request'] });
     queryClient.invalidateQueries({ queryKey: ['shifts', teamId] });
     queryClient.invalidateQueries({ queryKey: ['shift', teamId] });
     queryClient.invalidateQueries({ queryKey: ['activity', teamId] });

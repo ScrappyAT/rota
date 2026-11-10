@@ -90,8 +90,8 @@ export async function getCachedShifts(
       return null;
     }
     return parsed;
-  } catch (err) {
-    console.warn('[shiftCache] Failed to parse cached shifts:', err);
+  } catch {
+    console.warn('[storage] Operation unavailable');
     return null;
   }
 }
@@ -138,8 +138,8 @@ export async function getCachedShiftDetail(
       return null;
     }
     return parsed.shift;
-  } catch (err) {
-    console.warn('[shiftCache] Failed to parse cached shift detail:', err);
+  } catch {
+    console.warn('[storage] Operation unavailable');
     return null;
   }
 }
@@ -207,8 +207,8 @@ export async function getCachedMembers(
       return null;
     }
     return parsed.members;
-  } catch (err) {
-    console.warn('[shiftCache] Failed to parse cached members:', err);
+  } catch {
+    console.warn('[storage] Operation unavailable');
     return null;
   }
 }
@@ -224,6 +224,13 @@ export async function clearUserCache(userId: string): Promise<void> {
   const userKeys = allKeys.filter((key) => key.includes(`:${userId}:`));
 
   await Promise.all(userKeys.map((key) => AsyncStorage.removeItem(key)));
+}
+
+/** Revoke only this team's legacy detail/member caches. */
+export async function clearTeamCache(userId: string, teamId: string): Promise<void> {
+  const keys = await AsyncStorage.getAllKeys();
+  const prefixes = [`shifts:${userId}:${teamId}`, `shift_detail:${userId}:${teamId}`, `members:${userId}:${teamId}`];
+  await Promise.all(keys.filter(key => prefixes.some(prefix => key === prefix || key.startsWith(prefix + ':'))).map(key => AsyncStorage.removeItem(key)));
 }
 
 /**

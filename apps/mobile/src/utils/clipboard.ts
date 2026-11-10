@@ -22,8 +22,8 @@ export async function copyToClipboard(text: string): Promise<boolean> {
       await Clipboard.setStringAsync(text);
       return true;
     }
-  } catch (err) {
-    console.warn('[clipboard] Failed to copy text:', err);
+  } catch {
+    console.warn('[clipboard] Operation unavailable');
   }
   return false;
 }

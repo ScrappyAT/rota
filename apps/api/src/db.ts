@@ -1,3 +1,4 @@
+import { logEvent } from './services/observability';
 import { Pool } from 'pg';
 import { env } from './env';
 
@@ -9,7 +10,7 @@ export const pool = new Pool({
   idle_in_transaction_session_timeout: 30000,
 });
 
-pool.on('error', (err) => {
-  console.error('Unexpected error on idle client', err);
+pool.on('error', () => {
+  logEvent('database.error', { outcome: 'unexpected' }, 'warn');
   process.exit(-1);
 });

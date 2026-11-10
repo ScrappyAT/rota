@@ -1,3 +1,5 @@
+import { postAuthDestination } from '../../src/services/invitationLinks';
+import { authStorage } from '../../src/storage/authStorage';
 import { useState } from 'react';
 import { Alert,Text } from 'react-native';
 import { useLocalSearchParams,router } from 'expo-router';
@@ -20,7 +22,7 @@ export default function AuthAction(){
     setBusy(false);
     if(!response.success)return Alert.alert('Link unavailable',response.error?.message||'Request a new link.');
     setDone(true);
-    if(purpose==='MAGIC'&&response.data){await login(response.data);router.replace('/');}
+    if(purpose==='MAGIC'&&response.data){await login(response.data);router.replace(await postAuthDestination(authStorage));}
     else {await logout();Alert.alert('Password changed','Sign in with your new password.');router.replace('/(auth)/login');}
   };
   return <Screen><Text>{!valid?'Invalid account link':done?'Completed':purpose==='RESET'?'Choose a new password':'Confirm sign-in to Rota'}</Text>

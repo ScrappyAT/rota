@@ -1,6 +1,6 @@
 # Engineering Learning Log — Rota Monorepo
 
-This document captures the verified architectural decisions, technical challenges, debugging histories, and engineering lessons across the development of the Rota application. All entries are backed by verifiable Git commit history, tests, and documentation artifacts.
+This document captures the verified architectural decisions, technical challenges, debugging histories, and engineering lessons across the development of the Rota application. Historical entries cite Git history/tests/docs. The Graduation Phase 3 entry below records local, uncommitted work and explicitly separates it from released behavior.
 
 > [!NOTE]
 > Technical milestones and decisions in Sections 1–4 are derived from verifiable Git commits, test suites, and documentation. Section 5 contains the developer's authentic personal reflections on their engineering journey.
@@ -47,22 +47,22 @@ gitGraph
 ### 2.1 Multi-Tenant Role-Based Access Control (RBAC)
 - **Decision**: Store roles exclusively per team in `team_memberships.role` (`OWNER`, `MANAGER`, `STAFF`) with deliberately **no global role** on the `users` table.
 - **Rationale**: Small businesses operate independently. A user might be an `OWNER` of their own cafe while being `STAFF` at a medical clinic. Global roles would violate tenant isolation boundaries.
-- **Enforcement**: Centralized `requireRole([...allowedRoles])` middleware ([`apps/api/src/middleware/role.ts`](file:///c:/Users/HP/Desktop/rota%20project/apps/api/src/middleware/role.ts)). Non-members receive HTTP 404 to avoid leaking tenant existence; insufficient roles receive HTTP 403.
+- **Enforcement**: Centralized `requireRole([...allowedRoles])` middleware ([`apps/api/src/middleware/tenant.ts`](../apps/api/src/middleware/tenant.ts)). Non-members receive HTTP 404 to avoid leaking tenant existence; insufficient roles receive HTTP 403.
 
 ### 2.2 Keyset Cursor Pagination Over Offset Pagination
-- **Decision**: Implement keyset cursor pagination over a stable descending tuple `(starts_at|created_at, id)` ([`apps/api/src/pagination.ts`](file:///c:/Users/HP/Desktop/rota%20project/apps/api/src/pagination.ts), [`docs/PAGINATION.md`](file:///c:/Users/HP/Desktop/rota%20project/docs/PAGINATION.md)).
+- **Decision**: Implement keyset cursor pagination over a stable descending tuple `(starts_at|created_at, id)` ([`apps/api/src/pagination.ts`](../apps/api/src/pagination.ts), [`docs/PAGINATION.md`](../docs/PAGINATION.md)).
 - **Rationale**: Traditional `OFFSET / LIMIT` pagination suffers from:
   1. $O(N)$ query degradation as offsets grow large because the database must scan and discard $N$ rows.
   2. Page-drift / duplicate rows when items are inserted or deleted while a client is paginating.
 - **Verification**: Tested against a 10,000-row activity dataset under k6 load (`p95 = 24.45 ms` across 3,200 continuous pagination requests with 0 duplicate or skipped records).
 
 ### 2.3 Strict Minor-Unit (Integer) Money Model
-- **Decision**: All subscription prices, seat additions, proration calculations, and invoice balances are calculated and stored strictly in integer minor units (kobo for NGN) ([`apps/api/src/billing/proration.ts`](file:///c:/Users/HP/Desktop/rota%20project/apps/api/src/billing/proration.ts)).
+- **Decision**: All subscription prices, seat additions, proration calculations, and invoice balances are calculated and stored strictly in integer minor units (kobo for NGN) ([`apps/api/src/billing/proration.ts`](../apps/api/src/billing/proration.ts)).
 - **Rationale**: Floating-point arithmetic introduces rounding inaccuracies (e.g., `0.1 + 0.2 !== 0.3`). The gateway client converts from kobo to naira only at the boundary when communicating with Flutterwave.
-- **Verification**: 26 unit tests in [`apps/api/__tests__/billing.test.ts`](file:///c:/Users/HP/Desktop/rota%20project/apps/api/__tests__/billing.test.ts) verify exact zero-loss penny rounding on partial-month upgrades and seat changes.
+- **Verification**: 26 unit tests in [`apps/api/__tests__/billing.test.ts`](../apps/api/__tests__/billing.test.ts) verify exact zero-loss penny rounding on partial-month upgrades and seat changes.
 
 ### 2.4 Dual-Tier State Architecture for Mobile (TanStack Query + Disk Cache)
-- **Decision**: Combine in-memory TanStack React Query v5 caching with disk-persisted file caching via [`apps/mobile/src/storage/shiftCache.ts`](file:///c:/Users/HP/Desktop/rota%20project/apps/mobile/src/storage/shiftCache.ts).
+- **Decision**: Combine in-memory TanStack React Query v5 caching with disk-persisted file caching via [`apps/mobile/src/storage/shiftCache.ts`](../apps/mobile/src/storage/shiftCache.ts).
 - **Rationale**: Shift workers frequently check schedules in basements, breakrooms, or areas with poor cellular reception. Persisting shift lists and individual shift details by `userId:teamId` guarantees instant offline rendering while blocking conflicting writes until reconnected.
 
 ---
@@ -71,7 +71,7 @@ gitGraph
 
 ### 3.1 Challenge: Refresh Token Reuse & Session Hijacking
 - **Problem**: In basic JWT refresh flows, if a stolen refresh token is reused after rotation, an attacker can maintain persistent access.
-- **Solution (Commit `c3c82f4`)**: Implemented token family reuse detection in [`apps/api/src/routes/auth.ts`](file:///c:/Users/HP/Desktop/rota%20project/apps/api/src/routes/auth.ts). Refresh tokens are stored as bcrypt hashes. Presenting an already-rotated token triggers immediate revocation of **all** active refresh tokens belonging to that user family, forcing re-authentication.
+- **Solution (Commit `c3c82f4`)**: Implemented token family reuse detection in [`apps/api/src/routes/auth.ts`](../apps/api/src/routes/auth.ts). Refresh tokens are stored as bcrypt hashes. Presenting an already-rotated token triggers immediate revocation of **all** active refresh tokens belonging to that user family, forcing re-authentication.
 
 ### 3.2 Challenge: Mobile Invitation Usability
 - **Problem**: The original invitation system generated 64-character hexadecimal tokens that were virtually impossible for users to manually type into mobile screens.
@@ -94,20 +94,20 @@ gitGraph
 ### 3.4 Challenge: False "Request Failed" Alerts on Successful Mutations
 - **Problem**: On physical Samsung Android test builds, deleting a shift or approving a swap succeeded on the backend and updated the database, but the app popped up an alert: `"Error — Request failed"`.
 - **Root Cause**:
-  1. [`apps/mobile/src/api/ensure.ts`](file:///c:/Users/HP/Desktop/rota%20project/apps/mobile/src/api/ensure.ts) used `dataOrThrow<T>`, which threw an `ApiError` if `res.data` was `undefined`. Delete endpoints and swap actions return HTTP 204 No Content or `{ success: true }` without a `data` field.
+  1. [`apps/mobile/src/api/ensure.ts`](../apps/mobile/src/api/ensure.ts) used `dataOrThrow<T>`, which threw an `ApiError` if `res.data` was `undefined`. Delete endpoints and swap actions return HTTP 204 No Content or `{ success: true }` without a `data` field.
   2. TanStack Query refetched the deleted shift (`['shift', teamId, shiftId]`) upon screen unmount, hitting a 404.
 - **Solution (Commit `b65caf9`)**:
   - Implemented `ensureSuccess(res)` to validate `res.success === true` without requiring a payload.
-  - Updated [`apps/mobile/src/api/client.ts`](file:///c:/Users/HP/Desktop/rota%20project/apps/mobile/src/api/client.ts) to parse HTTP 204/205 responses into `{ success: true }`.
+  - Updated [`apps/mobile/src/api/client.ts`](../apps/mobile/src/api/client.ts) to parse HTTP 204/205 responses into `{ success: true }`.
   - Added explicit query eviction before navigating away: `queryClient.removeQueries({ queryKey: ['shift', teamId, shiftId] })`.
-  - Added regression test suite in [`apps/api/__tests__/mutationResponseContract.test.ts`](file:///c:/Users/HP/Desktop/rota%20project/apps/api/__tests__/mutationResponseContract.test.ts).
+  - Added regression test suite in [`apps/api/__tests__/mutationResponseContract.test.ts`](../apps/api/__tests__/mutationResponseContract.test.ts).
 
 ### 3.5 Challenge: Hosted Checkout Deep-Link Routing & Stale Pending Payments
 - **Problem**: Returning to Android from Flutterwave checkout redirected to `rota://billing/redirect`, triggering Expo Router's "Oops! This screen doesn't exist" route, leaving behind stale pending payment cards in the UI.
 - **Solution (Commit `3ff14da`, `e981860`)**:
   - Registered the redirect route in Expo Router (`apps/mobile/app/billing/redirect.tsx`).
-  - Hardened [`apps/mobile/src/utils/checkout.ts`](file:///c:/Users/HP/Desktop/rota%20project/apps/mobile/src/utils/checkout.ts) to verify specific transaction IDs rather than assuming missing pending payments equal success.
-  - Implemented safe pending payment reconciliation in [`apps/api/src/billing/service.ts`](file:///c:/Users/HP/Desktop/rota%20project/apps/api/src/billing/service.ts) to keep obsolete cards out of the UI without mutating ledger entries that the gateway might still settle.
+  - Hardened [`apps/mobile/src/utils/checkout.ts`](../apps/mobile/src/utils/checkout.ts) to verify specific transaction IDs rather than assuming missing pending payments equal success.
+  - Implemented safe pending payment reconciliation in [`apps/api/src/billing/service.ts`](../apps/api/src/billing/service.ts) to keep obsolete cards out of the UI without mutating ledger entries that the gateway might still settle.
 
 ---
 
@@ -136,3 +136,43 @@ If I were to start this project over from the beginning, I would spend more time
 
 ### 5.5 How I've Grown
 Completing this project helped me grow as a developer. I feel much more confident tackling technical problems and building applications that people can actually use.
+
+
+## 6. Graduation Phase 3 engineering record — 10 November 2026
+
+This is a technical implementation record, not an invented personal reflection
+or a claim that the original developer performed new device/provider testing.
+The developer's Section 5 reflections and completed 14 October demo are retained.
+
+- Observability requires a privacy boundary, not logging the whole request/error.
+  Fixed event names plus scalar allowlists prevent nested provider/token/SQL data
+  from reaching stdout or Sentry. Final-envelope tests are stronger evidence than
+  testing a helper while leaving SDK automatic integrations unconstrained.
+- Correlation must not change business idempotency. Adding request IDs to outbox
+  payloads would change dedupe comparisons. Instead the uncommitted intent log
+  maps requestId to outbox UUID; durable attempts establish later execution.
+- Scheduling deferrals, durable attempts and BullMQ deliveries are different
+  observations. Keep their counts separate and inspect PostgreSQL after a crash.
+  A missing final log is not proof that an external side effect did not happen.
+- Optional telemetry must not break offline/mobile use or financial processing.
+  Mobile loads the SDK only after valid configuration. SDK/sink failures are
+  contained; fatal server errors still exit rather than pretending to recover.
+- Expo's recommended Sentry SDK is 7.11.0, while Node's new SDK uses the v11
+  dataCollection options. Initial TypeScript checks exposed removed option names;
+  correcting against the installed types avoids relying on obsolete examples.
+- A first combined lint run rejected the synchronous optional native import.
+  The single-line exception documents why Metro needs it before root wrapping;
+  no global lint or dependency-security check was disabled. Regression fixtures
+  still use native mocks; no physical Android claim follows from these tests.
+- The current-registry production audit is 15 entries for both untouched main
+  and Phase 3 (5 high/9 moderate/1 low). Existing package versions did not change.
+  This differs from R3's historical 20; it is not evidence of five fixes here.
+- Historical 200-VU load evidence exists, but its p95/p99 exceed its own harness
+  thresholds. Reporting improvement does not turn a missed threshold into a pass.
+  The assessment asks for comparison, not a new invented latency SLA.
+
+Verification, combined workstream composition, operational gaps and the exact
+file inventory are in [the Phase 3 report](ROTA-GRADUATION-PHASE-3-REPORT.md).
+No commit, push, merge, deployment or live provider operation accompanies this
+entry. Earlier kobo-only descriptions are historical; R1 adds versioned USD cents
+while preserving NGN records and separately rounded proration.

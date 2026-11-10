@@ -64,7 +64,9 @@ router.post('/', async (req: AuthRequest, res, next) => {
 // List Teams
 router.get('/', async (req: AuthRequest, res, next) => {
   try {
-    const { rows } = await readQuery(req.user!.id,
+    // Membership is authorization data: resolve this join on primary even when
+    // a read replica still contains a revoked membership (or lacks a new one).
+    const { rows } = await pool.query(
       'SELECT t.id, t.name, t.owner_id as "ownerId", t.created_at as "createdAt" FROM teams t JOIN team_memberships tm ON t.id = tm.team_id WHERE tm.user_id = $1',
       [req.user!.id]
     );

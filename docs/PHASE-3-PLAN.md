@@ -6,6 +6,12 @@ this document is implemented yet.** Follow `AGENTS.md` while building it.
 
 ---
 
+> Historical scheduling plan, not the 2026 Graduation Phase 3 scope. Scheduling
+> already exists. The original offered-recipient approval proposal below was
+> superseded by R3's OWNER/MANAGER-only approval. Do not recreate migrations or
+> implement this plan as new work. Current observability scope/evidence is in
+> ROTA-GRADUATION-PHASE-3-REPORT.md and IMPLEMENTATION-STATUS.md.
+
 ## 1. Database migrations
 
 New file: `apps/api/migrations/003_shifts_swaps_activity.sql` (next free

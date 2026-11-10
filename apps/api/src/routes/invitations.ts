@@ -227,7 +227,7 @@ router.post('/accept', acceptLimiter, async (req: AuthRequest, res:Response, nex
       await clearFailedAttempts(userId);
       await clearFailedAttempts(clientIp);
 
-      res.json({ success: true });
+      res.json({ success: true, data: { teamId: invite.team_id } });
     } catch (e) {
       await client.query('ROLLBACK');
       throw e;

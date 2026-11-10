@@ -10,8 +10,54 @@ Status categories:
 - **Not started**
 - **Blocked** — cannot proceed until a listed dependency is resolved.
 
-Last correction validation: R3, 2026-11-02; see Milestone R3 below.
-Earlier phase tables and validation history retain their original audit context.
+Latest verification: **integrated graduation release,10 November2026**.
+Branch `codex/graduation-release-2026-11-10` combines runtime repair + Phase1/2/3.
+All478 tests/44 suites passed on this actual integrated tree (136.167s).
+TypeScript, lint (zero errors/one existing shared warning), shared/API builds
+and the final Docker-image dependency/HTTP/separate-worker smoke passed.
+Migrations001–009 are unchanged; only explicitly approved disposable migration
+safety tests executed SQL. No application/production migrator ran.
+
+Installable APK build947dc9d2-f999-43a8-b3e4-3b9a4c8a23cf FINISHED successfully; tracked in
+[final release report](GRADUATION-RELEASE-REPORT.md). Intended backend health
+returned404; no Railway deployment or physical Android execution is claimed.
+Original branches/worktrees remain intact. The older status below describes
+the preserved pre-integration workstreams, not the current release candidate.
+
+## Current graduation integration status
+
+| Workstream | Local evidence | Integration/deployment boundary |
+|---|---|---|
+| Railway runtime repair | 12 protected files; prior final-image dependency/HTTP smoke evidence in its report | Separate fix/railway-runtime-dependencies checkout, uncommitted; not deployed |
+| Graduation Phase 1 | 8 protected files; 19 billing-boundary/primary-membership cases, historical full 392 tests | Separate phase1 worktree, not integrated here |
+| Graduation Phase 2 | 36 protected files; 51 extracted-mobile/API cases; historical combined 443/38 | Separate phase2 worktree; physical Android acceptance remains open |
+| Graduation Phase 3 | Structured request/job logs; optional server/mobile JS Sentry; privacy tests; assessment docs | Dedicated phase3 branch/worktree; exact fresh tests/checks in its report |
+
+Final combined verification: **478 tests/44 suites** (373 original +19 Phase1
++51 Phase2 +35 Phase3); restored Phase3 new tests **35/35 across six suites**.
+TypeScript, lint (zero errors), shared/API builds and combined Android JS export
+passed. Runtime12/Phase1 8/Phase2 36 protected hashes are unchanged; migrations
+001–009 have no Git content changes. No physical Android or native build claim.
+
+Phase 3 code is implemented and locally verified as recorded in
+[ROTA-GRADUATION-PHASE-3-REPORT.md](ROTA-GRADUATION-PHASE-3-REPORT.md). No live Sentry
+project, production log collector/alerts, native crash reporting, current physical
+Android testing or provider delivery is claimed. App/server error integration
+is present; operation with real configuration needs approved staging acceptance.
+
+Existing pagination, sharding simulation and 200-VU benchmark evidence are
+retained. The historical load harness missed its own latency thresholds; this
+phase did not re-run k6/EXPLAIN or establish hosted production capacity.
+Flutterwave already satisfies the permitted provider choice; no replacement
+is needed. Store production considerations are now documented in README.
+
+Submission: demo recording completed 14 October 2026, shareable URL missing;
+LinkedIn post published; existing APK URL returns 404; portfolio is published
+but a dedicated Rota case-study page remains unverified/missing from supplied
+homepage evidence. See the corrected [submission checklist](SUBMISSION.md).
+
+All four local workstreams need an explicit integration/release review. Phase 3 did not change migration files, billing/auth rules or production records.
+No commit, push, merge or deployment was performed.
 
 ---
 

@@ -200,3 +200,18 @@ docker run --rm -v "${PWD}\load-tests:/scripts" -i grafana/k6 run /scripts/activ
 # 5) Verification Gates
 npm run typecheck && npm run lint && npm test      # 18 suites / 236 tests
 ```
+
+## Graduation Phase 3 evidence review (10 November 2026)
+
+The scripts and written results above already exist; this phase did not repeat
+k6 load execution or establish current production capacity. The reported
+200-VU after-cache p95 710.95ms and p99 1,020ms exceed the script's own p95<500ms
+and p99<1,000ms thresholds; before-cache also exceeds both. Zero HTTP errors and
+cache improvement do not mean every harness threshold passed. The PDF asks for
+200-VU before/after comparison and does not specify these latency limits.
+
+The two report headers date evidence 13/15 October respectively. They are
+historical authored summaries, not a new independently reproduced raw k6 result.
+Current regressions recheck cache/cursor behavior, not 200-user performance.
+For a future approved re-benchmark use disposable data/services, dummy providers,
+a separate port and pinned k6 version; never exhaust quotas or seed a live DB.

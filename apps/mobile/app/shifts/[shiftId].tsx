@@ -1,4 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { fetchSwap } from '../../src/api/swaps';
+import type { SwapRequest } from '../../src/api/swaps';
+import { swapMutation, swapMarkerKey, singleFlight } from '../../src/query/mobileState';
+import { ShiftEditor } from '../../src/components/ShiftEditor';
+import { clearOfflineData, offlineEpoch, offlineSessionCurrent } from '../../src/storage/offlineData';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -19,11 +24,14 @@ import { typography, spacing, colors, borderRadius } from '../../src/components/
 
 export default function ShiftDetailScreen() {
   const { shiftId,teamId:notificationTeamId } = useLocalSearchParams<{ shiftId: string;teamId?:string }>();
-  const { team, role } = useTeam();
+  const { team, teams, role } = useTeam();
   const { user } = useAuth();
   const { isOffline } = useNetwork();
   const queryClient = useQueryClient();
   const teamId = notificationTeamId ?? team?.id ?? '';
+  const authorizedTeam = teams.some(t => t.id === teamId);
+  const submittingSwap = useRef(false);
+  const [editing, setEditing] = useState(false);
 
   const [showPicker, setShowPicker] = useState(false);
   const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
@@ -38,13 +46,14 @@ export default function ShiftDetailScreen() {
   // Load persistent cache for this shift
   useEffect(() => {
     let active = true;
-    if (user?.id && teamId && shiftId) {
+    setCachedShift(null); setCachedMembers(null);
+    if (user?.id && authorizedTeam && teamId && shiftId) {
       getCachedShiftDetail(user.id, teamId, shiftId).then((data) => {
         if (!active || !data) return;
         setCachedShift(data);
-        const existing = queryClient.getQueryData(['shift', teamId, shiftId]);
+        const existing = queryClient.getQueryData(['shift', teamId, shiftId, user?.id]);
         if (!existing) {
-          queryClient.setQueryData(['shift', teamId, shiftId], data);
+          queryClient.setQueryData(['shift', teamId, shiftId, user?.id], data);
         }
       });
       getCachedMembers(user.id, teamId).then((data) => {
@@ -57,8 +66,8 @@ export default function ShiftDetailScreen() {
   }, [user?.id, teamId, shiftId]);
 
   const shiftQuery = useQuery({
-    queryKey: ['shift', teamId, shiftId],
-    enabled: Boolean(teamId && shiftId),
+    queryKey: ['shift', teamId, shiftId, user?.id],
+    enabled: authorizedTeam && Boolean(teamId && shiftId) && !isOffline,
     queryFn: async () => {
       const data = await fetchShift(teamId, shiftId);
       if (user?.id) {
@@ -70,8 +79,8 @@ export default function ShiftDetailScreen() {
   });
 
   const membersQuery = useQuery({
-    queryKey: ['members', teamId],
-    enabled: Boolean(teamId),
+    queryKey: ['members', teamId, user?.id],
+    enabled: authorizedTeam && Boolean(teamId) && !isOffline,
     queryFn: async () => {
       const data = await fetchMembers(teamId);
       if (user?.id) {
@@ -82,8 +91,8 @@ export default function ShiftDetailScreen() {
     retry: (failureCount) => (isOffline ? false : failureCount < 1),
   });
 
-  const isManagerOrOwner = role === 'OWNER' || role === 'MANAGER';
-  const shift = shiftQuery.data ?? cachedShift;
+  const isManagerOrOwner = teamId === team?.id && (role === 'OWNER' || role === 'MANAGER') && !isOffline;
+  const shift = authorizedTeam ? shiftQuery.data ?? cachedShift : null;
   const members = membersQuery.data ?? cachedMembers ?? [];
 
   const myAssignment = useMemo(() => {
@@ -95,7 +104,7 @@ export default function ShiftDetailScreen() {
     queryClient.invalidateQueries({ queryKey: ['shifts', teamId] });
     queryClient.invalidateQueries({ queryKey: ['activity', teamId] });
     queryClient.invalidateQueries({ queryKey: ['swaps', teamId] });
-    queryClient.invalidateQueries({ queryKey: ['shift', teamId, shiftId] });
+    queryClient.invalidateQueries({ queryKey: ['shift', teamId, shiftId, user?.id] });
   };
 
   const guardOffline = (actionName: string): boolean => {
@@ -152,14 +161,16 @@ export default function ShiftDetailScreen() {
     },
     onSuccess: async () => {
       // 1. Immediately remove this shift query from the cache so it will not refetch
-      queryClient.removeQueries({ queryKey: ['shift', teamId, shiftId] });
+      queryClient.removeQueries({ queryKey: ['shift', teamId, shiftId, user?.id] });
       // 2. Invalidate lists so they refresh
       queryClient.invalidateQueries({ queryKey: ['shifts', teamId] });
       queryClient.invalidateQueries({ queryKey: ['activity', teamId] });
       queryClient.invalidateQueries({ queryKey: ['swaps', teamId] });
       // 3. Purge from persistent offline cache
       if (user?.id) {
-        removeCachedShiftDetail(user.id, teamId, shiftId).catch(() => {});
+        await removeCachedShiftDetail(user.id, teamId, shiftId);
+        await clearOfflineData(user.id, teamId);
+        await queryClient.invalidateQueries({ queryKey: ['shifts', teamId] });
       }
       // 4. Safely navigate away
       if (router.canGoBack()) {
@@ -176,28 +187,35 @@ export default function ShiftDetailScreen() {
     },
   });
 
-  const swap = useMutation({
-    mutationFn: () => {
-      if (guardOffline('request swaps')) throw new Error('Offline');
-      return requestSwap(teamId, shiftId, { offeredTo: swapMember || undefined, reason: swapReason || undefined });
-    },
-    onSuccess: () => {
-      setSwapMode(false);
-      setSwapMember('');
-      setSwapReason('');
-      Alert.alert('Done', 'Swap request submitted.');
-      invalidateAll();
-    },
-    onError: (e) => {
-      if ((e as Error).message !== 'Offline') Alert.alert('Error', (e as Error).message);
-    },
+  const markerKey = swapMarkerKey(user?.id ?? '', teamId, shiftId);
+  const knownSwap = queryClient.getQueryData<SwapRequest>(markerKey);
+  const marker = useQuery<SwapRequest | null>({ queryKey: markerKey,
+    enabled: authorizedTeam && !isOffline && Boolean(knownSwap && !knownSwap.id.startsWith('optimistic:')),
+    queryFn: async () => { const known = queryClient.getQueryData<SwapRequest>(markerKey); return known ? fetchSwap(teamId, known.id) : null; },
   });
+  const swapEpoch = offlineEpoch();
+  const swap = useMutation(swapMutation(queryClient, user?.id ?? '', teamId, shift ?? { id: shiftId, teamId, title: '', startsAt: '', endsAt: '', status: '', createdBy: '', description: null, createdAt: '', updatedAt: '' }, input => {
+    if (isOffline || !authorizedTeam) throw new Error('Reconnect before requesting a swap');
+    return requestSwap(teamId, shiftId, input);
+  }, () => offlineSessionCurrent(user?.id ?? '', swapEpoch)));
+  const swapPending = swap.isPending || marker.data?.status === 'PENDING';
+  const submitSwap = async () => {
+    if (submittingSwap.current || swapPending || isOffline) return;
+    submittingSwap.current = true;
+    try {
+      await singleFlight(`swap:${user?.id}:${teamId}:${shiftId}`, () => swap.mutateAsync({ offeredTo: swapMember || undefined, reason: swapReason || undefined }));
+      setSwapMode(false); setSwapMember(''); setSwapReason('');
+    } catch (error) { Alert.alert('Swap request failed', error instanceof Error ? error.message : 'Your request was rolled back. Try again.'); }
+    finally { submittingSwap.current = false; }
+  };
 
   useEffect(() => {
     setSelectedUsers([]);
     setShowPicker(false);
     setSwapMode(false);
   }, [shiftId]);
+
+  if (!authorizedTeam) return <Screen><ErrorState message="This team is not available to your account." /></Screen>;
 
   if (isDeleting) {
     return <Screen><Text style={typography.body}>Deleting shift...</Text></Screen>;
@@ -285,20 +303,22 @@ export default function ShiftDetailScreen() {
                 onChangeText={setSwapReason}
               />
               <View style={styles.buttonRow}>
-                <Button title="Request swap" disabled={isOffline} onPress={() => swap.mutate()} />
+                <Button title={swapPending ? "Swap requested" : "Request swap"} disabled={isOffline || swapPending} onPress={() => { void submitSwap(); }} />
                 <Button title="Cancel" variant="ghost" onPress={() => setSwapMode(false)} />
               </View>
             </Card>
           ) : (
             myAssignment && !isManagerOrOwner && (
               <View style={styles.buttonRow}>
-                <Button title="Request swap" disabled={isOffline} onPress={() => setSwapMode(true)} />
+                <Button title={swapPending ? "Swap requested" : "Request swap"} disabled={isOffline || swapPending} onPress={() => setSwapMode(true)} />
               </View>
             )
           )}
 
           {isManagerOrOwner && (
             <>
+              <Button title={editing ? 'Close editor' : 'Edit shift details'} onPress={() => setEditing(v => !v)} />
+              {editing ? <ShiftEditor key={shift.id} shift={shift} onSaved={() => { setEditing(false); invalidateAll(); }} /> : null}
               <View style={styles.buttonRow}>
                 <Button title="Assign staff" disabled={isOffline} onPress={() => setShowPicker((v) => !v)} />
                 <Button

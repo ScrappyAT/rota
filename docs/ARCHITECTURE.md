@@ -28,40 +28,29 @@ This document describes the implemented architecture of the Rota application.
 
 ```mermaid
 flowchart LR
-    subgraph Mobile[Expo app - apps/mobile]
-        UI[Screens + React Query]
-        API_CLIENT[src/api/* - apiClient]
-        TOKEN[SecureStore - access/refresh/team]
-        UI --> API_CLIENT
-        API_CLIENT --> TOKEN
-    end
-
-    subgraph API[Express API - apps/api]
-        RATE[rate limiters:<br/>/auth 100, /teams 300,<br/>/invitations 300 in-memory;<br/>/devices 200 Redis;<br/>budgets env-overridable]
-        AUTH[auth + requireRole RBAC]
-        ROUTES[teams / shifts / swaps /<br/>activity / subscription /<br/>invitations / devices]
-        PUSH[notifications service -> Expo push]
-        RATE --> AUTH --> ROUTES
-        ROUTES --> PUSH
-    end
-
-    subgraph Data[(PostgreSQL 15)]
-        MIG[runner - migrations table]
-        TX[explicit transactions + activity events]
-    end
-
-    subgraph Cache[(Redis 7)]
-        RL[rl:devices fixed-window]
-        HEALTH[health probe]
-    end
-
-    API_CLIENT -->|HTTPS /health + ApiResponse envelope| RATE
-    ROUTES --> TX
-    ROUTES --> Cache
-    TX --> Data
-    MIG --> Data
-    PUSH -->|FCM/APNs| Mobile
+    M[Expo mobile / TanStack Query / SecureStore] -->|HTTPS + request ID| A[Express API / Zod / auth + tenant roles]
+    A -->|authoritative writes + auth + financial reads| P[(PostgreSQL primary)]
+    A -->|allowlisted safe reads / primary fence + fallback| R[(Optional read endpoint)]
+    A --> C[(Redis cache + atomic rate limits)]
+    P --> O[Transactional job_outbox + job_attempts]
+    O --> D[Outbox dispatcher]
+    D --> Q[(Redis / BullMQ)]
+    Q --> W[Separate worker process]
+    W --> P
+    W --> E[Mockable Flutterwave / mail / Expo providers]
+    A --> L[Allowlisted JSON logs + optional Sentry]
+    W --> L
+    M --> S[Optional JS-only Sentry / privacy scrubber]
+    H[Separate team-hash sharding simulation] -.-> S0[(Shard 0)]
+    H -.-> S1[(Shard 1)]
 ```
+
+The shard simulation is independent of read replication; HTTP routes do not
+transparently shard all live data. External operations run in workers, not
+inside business transactions. Error monitoring is optional and never a
+transaction dependency. The diagram describes code paths, not a verified
+production hosting topology.
+
 
 Everything crosses the wire wrapped in the `ApiResponse` envelope; every
 team-scoped route sits behind `authenticate` + `requireRole`.
@@ -136,8 +125,9 @@ Redis-backed rate limited (200 req / 15 min / IP):
 - `PATCH /devices/preferences` — update preferences.
 
 Shifts and swap writes call `services/notifications` which writes a
-`notifications` row (deduped by a deterministic `event_key`) and forwards to
-the Expo push service for users with a registered device and the event enabled.
+`notifications` row and transactional outbox intent, deduped by deterministic
+event keys. The separate worker checks preferences/quiet hours, sends through
+Expo and checks receipts. Uncertain sends require operator review.
 
 ## Billing & Subscriptions (Phase 4; superseded financial rules)
 
@@ -196,21 +186,15 @@ membership checks, and scopes every query by `team_id`. Every phase-3 write is
 transactional, and swap approval re-validates membership and assignment state
 inside the transaction. See `docs/SECURITY.md`.
 
-## Known Gaps (accepted)
+## Operational boundaries
 
-- CORS is a comma-separated `CORS_ORIGIN` allow-list; default `*` is a dev
-  posture only, and `env.ts` refuses `*` in production. Real origins are
-  set at deploy time (see `docs/DEPLOYMENT.md`).
-- `/auth` (100), `/teams` (300), and `/invitations` (300) limits are in-memory
-  per instance; only `/devices` (200) is shared via Redis. Under horizontal
-  scaling the in-memory limits become per-pod.
-- Redis is used by the `/health` probe and the `/devices` rate limiter —
-  no general cache layer yet.
-- Push notifications deliver through Expo's hosted service; delivery
-  confirmation/receipts and in-app foreground handling are still being wired
-  in the mobile app.
-- Mobile runtime (navigation, list behavior) has not been exercised on a
-  device; see `docs/IMPLEMENTATION-STATUS.md`.
+Redis-backed IP/user quotas are shared across instances and sensitive quotas
+fail closed. Cache-aside applies to roster/calendar/activity with tenant keys,
+TTLs and invalidation. Financial state and authorization use primary SQL.
+R2 persists retries/dead jobs and uncertain delivery state. Those features are
+implemented; live push/mail/provider delivery and physical Android interactions
+remain separate acceptance evidence. Production origins, trusted proxies,
+separate workers and bounded connection budgets require deployment review.
 
 ## Deployment & performance
 
@@ -333,3 +317,90 @@ in the future. Expired/missing grace denies protected writes; reads and renewal
 remain available. Seat capacity, financial revisions and ledger rules remain
 unchanged. Swap approval requires OWNER/MANAGER and locks the pending request;
 staff requester/replacement status does not grant approval permission.
+
+## Graduation Phase 3: observability
+
+`middleware/request-logging.ts` runs before CORS, parsers and route handlers.
+`services/observability.ts` keeps request context in AsyncLocalStorage and emits
+one completion/abort event. `X-Request-ID` is generated on the server and exposed
+through CORS; caller-supplied IDs are ignored. User IDs are read after auth runs.
+Status defines the HTTP outcome, not proof of a successful financial settlement.
+
+`services/job-runtime.ts` logs durable start/completion/retry/dead/deferred/skipped
+outcomes plus BullMQ queue attempts (including failures before a DB claim).
+`services/outbox.ts` logs only an **uncommitted intent** and its UUID; the caller
+still owns COMMIT/ROLLBACK. No payload or transaction/deduplication key is altered.
+
+Server and mobile Sentry use `packages/shared/src/telemetry.ts` as a final
+allowlist. Raw errors, stacks, requests, users, breadcrumbs, arbitrary tags and
+attachments cannot pass the configured event scrubber. Server 5xx/fatal errors,
+worker failures and mobile JS/render/handled API-5xx paths are observed.
+Missing DSNs and SDK failures do not fail business requests. See
+[OBSERVABILITY.md](OBSERVABILITY.md) for schemas, incident tracing and limitations.
+
+Primary pool: max `DB_POOL_MAX=10`, connect 2s, statement 15s, idle transaction 30s.
+Read pool: max 10 by default, connect 1s, statement 3s, primary fallback.
+Shard simulation: two independent pools, max 10 each, connect 3s, idle 10s.
+Budget the sum across API replicas/workers/read endpoints; max is a ceiling,
+not a claim that all connections are opened immediately. No PgBouncer or managed
+physical WAL replication is configured by this repository.
+
+Phase 1/2 source fixes remain in their own review worktrees. Their reports and
+the Phase 3 combined-test inventory define what must be integrated; this document
+does not imply those uncommitted changes are already in main.
+
+
+## Graduation Phase 1 — billing boundary and membership authorization
+
+`GET /teams` now executes its membership/team join on the primary. The list is
+an authorization decision, so an unfenced caller must not receive former teams
+from stale replica memberships. Newly joined teams are visible immediately.
+Authorized team details, rosters, calendars and activity retain their explicit
+read routing and existing primary write fences/fallback behavior.
+
+The first server-verified failed renewal opens the configured grace window even
+when initiation occurred at/after expiry. Its deadline is verification time plus
+SUBSCRIPTION_GRACE_DAYS (default 14); later failures cannot extend or reopen it
+for that service period. A provider verification outage is not a failed payment
+and grants no grace. Scheduled reductions and zero-due changes preserve an
+existing failure/deadline. Successful paid changes/renewals retain their existing
+recovery behavior. Protected writes remain usable in grace and restricted after
+the deadline; read access and the existing operation-specific policy are unchanged.
+
+Expiry/grace materialization still increments revisions and appends immutable
+STATE records. A pending renewal may cross only a continuous ledger history of
+status-transition/renewal-failure revisions with identical team, plan, seats and
+period, and no scheduled change. Missing proof, paid configuration changes and a
+new paid period remain superseded; captured funds retain the existing manual
+credit handling. No ledger row or historical migration is rewritten.
+
+Verification and isolation details: `ROTA-GRADUATION-PHASE-1-REPORT.md`.
+
+
+## Graduation Phase 2 — mobile requirements
+
+`POST /invitations/accept` retains the existing authenticated, email-matched,
+expiring, one-use redemption transaction and additionally returns
+`{ success: true, data: { teamId } }`. Existing success-only clients remain
+compatible. The new destination is disclosed only after successful redemption;
+invalid, expired, reused and mismatched invitations do not disclose it. This is
+the only backend behavior change in this phase; no migration is needed.
+
+The already configured `rota` scheme routes shareable `rota:///teams/accept`
+links to a public intake screen. Validated code/email/expiry are kept through
+authentication in native SecureStore. The app redeems, refreshes the Query-owned
+team list, verifies selection against that list and selects the server-returned
+team. A saved successful destination permits retrying a failed membership refresh
+without redeeming a second time. The API remains the invitation authority.
+
+Teams/roles and settings are now TanStack Query projections. Context coordinates
+identity/selection and exposes query results. Swaps use snapshot/cancel/optimistic
+PENDING/reconcile/rollback mutation callbacks with a synchronous duplicate gate.
+Settings retain server timestamps, optimistic rollback and foreground sync.
+Upcoming assigned shifts have a separate user/team filesystem snapshot; a bounded
+SecureStore identity lease permits cold read-only offline launch. Cached identity
+blocks business API requests until server verification; known revocations clear
+caches and leave durable team tombstones. Calendar, activity pagination and shift
+editing use existing server endpoints. Full state ownership and tradeoffs:
+`STATE.md`; executed evidence and device limitations:
+`ROTA-GRADUATION-PHASE-2-REPORT.md`.

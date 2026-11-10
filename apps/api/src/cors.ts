@@ -51,6 +51,7 @@ export const createCorsMiddleware = (
       origin: '*',
       methods: ALLOWED_METHODS,
       allowedHeaders: ALLOWED_HEADERS,
+      exposedHeaders: ['X-Request-ID'],
       credentials: false,
       optionsSuccessStatus: 204,
     };
@@ -80,6 +81,7 @@ export const createCorsMiddleware = (
     origin,
     methods: ALLOWED_METHODS,
     allowedHeaders: ALLOWED_HEADERS,
+    exposedHeaders: ['X-Request-ID'],
     credentials: false,
     optionsSuccessStatus: 204,
   };

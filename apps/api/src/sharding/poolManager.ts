@@ -1,3 +1,4 @@
+import { logEvent } from '../services/observability';
 import { Pool, PoolConfig } from 'pg';
 import { ShardConfig, DEFAULT_SHARD_CONFIGS, getShardId } from './router';
 
@@ -16,8 +17,8 @@ export class ShardedPoolManager {
         ...customPoolOptions,
       });
 
-      pool.on('error', (err) => {
-        console.error(`[ShardedPoolManager] Unexpected error on idle client for ${cfg.name}:`, err.message);
+      pool.on('error', () => {
+        logEvent('database.error', { outcome: 'unexpected' }, 'warn');
       });
 
       this.pools.set(cfg.id, pool);
@@ -79,10 +80,10 @@ export class ShardedPoolManager {
 
   public async closeAll(): Promise<void> {
     const closePromises: Promise<void>[] = [];
-    this.pools.forEach((pool, id) => {
+    this.pools.forEach((pool) => {
       closePromises.push(
-        pool.end().catch((err) => {
-          console.warn(`[ShardedPoolManager] Error closing pool ${id}:`, err);
+        pool.end().catch(() => {
+          logEvent('database.error', { outcome: 'unexpected' }, 'warn');
         })
       );
     });

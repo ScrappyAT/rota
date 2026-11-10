@@ -1,186 +1,62 @@
-import { useState, useEffect } from 'react';
-import { FlatList, RefreshControl, StyleSheet, Text, View, ActivityIndicator, TouchableOpacity, Alert } from 'react-native';
-import { useInfiniteQuery } from '@tanstack/react-query';
+import { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, FlatList, Platform, RefreshControl, Text, View } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { router } from 'expo-router';
-import { fetchShifts } from '../../src/api/shifts';
-import { useTeam } from '../../src/context/TeamContext';
+import { fetchShifts, Shift } from '../../src/api/shifts';
 import { useAuth } from '../../src/context/AuthContext';
+import { useTeam } from '../../src/context/TeamContext';
 import { useNetwork } from '../../src/context/NetworkContext';
-import { saveCachedShifts, getCachedShifts, CachedShiftsData } from '../../src/storage/shiftCache';
-import { queryClient } from '../../src/query/queryClient';
+import { getUpcoming } from '../../src/storage/offlineData';
+import { loadUpcoming } from '../../src/query/upcoming';
+import { localDayRange, pageRequestGate, uniqueItems } from '../../src/query/mobileState';
 import { TeamGate } from '../../src/components/TeamGate';
 import { TeamSelector } from '../../src/components/TeamSelector';
-import { ErrorState } from '../../src/components/ErrorState';
 import { OfflineBanner } from '../../src/components/OfflineBanner';
-import { formatRange } from '../../src/utils/dates';
 import { Screen } from '../../src/components/ui/Screen';
-import { Card } from '../../src/components/ui/Card';
 import { Button } from '../../src/components/ui/Button';
-import { typography, spacing, colors, borderRadius } from '../../src/components/ui/theme';
-
+import { Card } from '../../src/components/ui/Card';
+import { formatRange } from '../../src/utils/dates';
 export default function ShiftsScreen() {
-  const { team, role } = useTeam();
-  const { user } = useAuth();
-  const { isOffline } = useNetwork();
-  const teamId = team?.id ?? '';
-  const canManage = role === 'OWNER' || role === 'MANAGER';
-
-  const [cachedData, setCachedData] = useState<CachedShiftsData | null>(null);
-
-  // Load persistent cache on mount or when user/team changes
+  const { user } = useAuth(), { team, role } = useTeam(), { isOffline } = useNetwork(), client = useQueryClient();
+  const userId = user?.id ?? '', teamId = team?.id ?? '';
+  const [day, setDay] = useState(new Date()), [picker, setPicker] = useState(false), [view, setView] = useState<'upcoming' | 'calendar'>('upcoming');
+  const gate = useRef(pageRequestGate());
+  const upcomingKey = ['shifts', teamId, userId, 'upcoming'] as const;
+  const upcoming = useQuery({ queryKey: upcomingKey, enabled: Boolean(userId && teamId) && !isOffline,
+    queryFn: () => loadUpcoming(userId, teamId), staleTime: 30_000 });
   useEffect(() => {
     let active = true;
-    if (user?.id && teamId) {
-      getCachedShifts(user.id, teamId).then((data) => {
-        if (!active || !data) return;
-        setCachedData(data);
-
-        // Pre-populate query client if no active in-memory cache exists
-        const existing = queryClient.getQueryData(['shifts', teamId]);
-        if (!existing && data.items.length > 0) {
-          queryClient.setQueryData(['shifts', teamId], {
-            pages: [{ items: data.items, nextCursor: data.nextCursor }],
-            pageParams: [undefined],
-          });
-        }
-      });
-    }
-    return () => {
-      active = false;
-    };
-  }, [user?.id, teamId]);
-
-  const query = useInfiniteQuery({
-    queryKey: ['shifts', teamId],
-    enabled: Boolean(teamId),
-    queryFn: async ({ pageParam }) => {
-      const res = await fetchShifts(teamId, { limit: 20, cursor: pageParam ?? undefined });
-      if (user?.id && res.items) {
-        saveCachedShifts(user.id, teamId, res.items, res.nextCursor ?? undefined).catch(() => {});
-      }
-      return res;
-    },
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
-    retry: (failureCount) => (isOffline ? false : failureCount < 1),
-  });
-
-  const queryItems = query.data?.pages.flatMap((p) => p.items) ?? [];
-  // Use live query items if available, otherwise seamlessly fallback to persistent cache
-  const items = queryItems.length > 0 ? queryItems : (cachedData?.items ?? []);
-  const hasShifts = items.length > 0;
-
-  const handleCreateShiftPress = () => {
-    if (isOffline) {
-      Alert.alert('Offline Mode', 'Cannot create shifts while offline. Please connect to the internet.');
-      return;
-    }
-    router.push('/shifts/new');
-  };
-
-  const renderItem = ({ item }: { item: { id: string; title: string; startsAt: string; endsAt: string; status: string } }) => (
-    <TouchableOpacity activeOpacity={0.8} onPress={() => router.push(`/shifts/${item.id}`)}>
-      <Card style={styles.card}>
-        <View style={styles.cardHeader}>
-          <Text style={[typography.h3, { flex: 1, marginRight: spacing.sm }]} numberOfLines={1}>
-            {item.title}
-          </Text>
-          <View style={[styles.badge, item.status === 'ACTIVE' ? styles.badgeActive : styles.badgeMuted]}>
-            <Text style={[typography.label, item.status === 'ACTIVE' ? styles.badgeTextActive : styles.badgeTextMuted]}>
-              {item.status}
-            </Text>
-          </View>
-        </View>
-        <Text style={[typography.bodySmall, { marginTop: spacing.xs }]}>{formatRange(item.startsAt, item.endsAt)}</Text>
-      </Card>
-    </TouchableOpacity>
-  );
-
-  return (
-    <Screen style={styles.container} scrollable={false}>
-      <TeamGate>
-        {isOffline && <OfflineBanner />}
-
-        <View style={styles.header}>
-          <TeamSelector />
-        </View>
-
-        {canManage && user && (
-          <View style={styles.actions}>
-            <Button
-              title={isOffline ? "Create Shift (Offline)" : "Create Shift"}
-              onPress={handleCreateShiftPress}
-              disabled={isOffline}
-            />
-          </View>
-        )}
-
-        {query.isError && !hasShifts ? (
-          <ErrorState message={isOffline ? "You are offline and no cached shifts were found." : "Could not load shifts."} />
-        ) : (
-          <FlatList
-            data={items}
-            keyExtractor={(item) => item.id}
-            renderItem={renderItem}
-            contentContainerStyle={styles.list}
-            refreshControl={
-              <RefreshControl refreshing={query.isRefetching} onRefresh={() => query.refetch()} />
-            }
-            onEndReached={() => {
-              if (!isOffline && query.hasNextPage) query.fetchNextPage();
-            }}
-            onEndReachedThreshold={0.4}
-            ListFooterComponent={query.isFetchingNextPage ? <ActivityIndicator color={colors.primary} style={{ margin: spacing.md }} /> : null}
-            ListEmptyComponent={
-              <View style={styles.empty}>
-                <Text style={typography.bodySmall}>
-                  {query.isPending && !hasShifts
-                    ? 'Loading shifts...'
-                    : isOffline && !hasShifts
-                    ? 'You are offline and no shifts have been cached yet.'
-                    : 'No shifts match.'}
-                </Text>
-              </View>
-            }
-          />
-        )}
-      </TeamGate>
-    </Screen>
-  );
+    if (userId && teamId) void getUpcoming(userId, teamId).then(saved => {
+      if (active && saved && (!client.getQueryState(upcomingKey)?.dataUpdatedAt || client.getQueryState(upcomingKey)!.dataUpdatedAt < saved.cachedAt)) client.setQueryData(upcomingKey, saved, { updatedAt: saved.cachedAt });
+    });
+    return () => { active = false; };
+  }, [userId, teamId, client, isOffline]);
+  const range = localDayRange(day);
+  const calendar = useInfiniteQuery({ queryKey: ['shifts', teamId, userId, 'calendar', range.from], enabled: Boolean(teamId) && !isOffline && view === 'calendar',
+    queryFn: ({ pageParam }) => fetchShifts(teamId, { ...range, limit: 20, cursor: pageParam }), initialPageParam: undefined as string | undefined,
+    getNextPageParam: page => page.nextCursor ?? undefined });
+  const ownView = view === 'upcoming' || isOffline;
+  const items = ownView ? upcoming.data?.items.filter(s => Date.parse(s.startsAt) >= Date.now()) ?? [] : uniqueItems(calendar.data?.pages.flatMap(p => p.items) ?? []);
+  const pending = ownView ? upcoming.isFetching : calendar.isPending;
+  const error = ownView ? upcoming.error : calendar.error;
+  const refresh = async () => { if (!isOffline) { if (ownView) await upcoming.refetch(); else await calendar.refetch(); } };
+  const move = (delta: number) => { const next = new Date(day); next.setDate(next.getDate() + delta); setDay(next); };
+  const row = ({ item }: { item: Shift }) => <Card><Button variant="ghost" title={item.title} disabled={isOffline} onPress={() => router.push({ pathname: '/shifts/[shiftId]', params: { shiftId: item.id, teamId } })} /><Text>{formatRange(item.startsAt, item.endsAt)}</Text><Text>{item.status}</Text></Card>;
+  return <Screen scrollable={false}><TeamGate>
+    <TeamSelector />
+    {isOffline ? <OfflineBanner message="Offline / read-only" subMessage="Showing your saved upcoming shifts. Reconnect to verify your session and make changes." /> : null}
+    <View style={{ flexDirection: 'row', gap: 8 }}><Button title="My upcoming shifts" onPress={() => setView('upcoming')} /><Button title="Team calendar" disabled={isOffline} onPress={() => setView('calendar')} /></View>
+    {ownView ? <Text>Last updated: {upcoming.data ? new Date(upcoming.data.cachedAt).toLocaleString() : 'No saved shifts yet'}</Text> : <>
+      <View style={{ flexDirection: 'row', gap: 8 }}><Button title="Previous day" onPress={() => move(-1)} /><Button title="Today" onPress={() => setDay(new Date())} /><Button title="Next day" onPress={() => move(1)} /></View>
+      <Button title={day.toLocaleDateString()} variant="secondary" onPress={() => setPicker(true)} />
+      {picker ? <DateTimePicker value={day} mode="date" onChange={(_event, value) => { setPicker(Platform.OS === 'ios'); if (value) setDay(value); }} /> : null}
+    </>}
+    {(role === 'OWNER' || role === 'MANAGER') && !isOffline ? <Button title="Create shift" onPress={() => router.push('/shifts/new')} /> : null}
+    {error && !isOffline ? <View><Text accessibilityRole="alert">Could not refresh shifts. {error.message}</Text><Button title="Retry" onPress={() => { void refresh(); }} /></View> : null}
+    <FlatList data={items} keyExtractor={item => item.id} renderItem={row} refreshControl={<RefreshControl refreshing={!isOffline && (ownView ? upcoming.isFetching : calendar.isRefetching)} onRefresh={() => { void refresh(); }} />}
+      onEndReached={() => { void gate.current(!ownView && !isOffline && Boolean(calendar.hasNextPage) && !calendar.isFetching, () => calendar.fetchNextPage({ cancelRefetch: false })); }}
+      ListEmptyComponent={pending && !isOffline ? <ActivityIndicator accessibilityLabel="Loading shifts" /> : <Text>{isOffline && !upcoming.data ? 'No saved upcoming shifts for this account and team.' : ownView ? 'No upcoming assigned shifts.' : 'No shifts on this day.'}</Text>}
+      ListFooterComponent={!ownView && calendar.isFetchingNextPage ? <ActivityIndicator /> : null} />
+  </TeamGate></Screen>;
 }
-
-const styles = StyleSheet.create({
-  container: { padding: 0 },
-  header: {
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.md,
-  },
-  actions: {
-    paddingHorizontal: spacing.md,
-    paddingBottom: spacing.sm,
-    paddingTop: spacing.sm,
-  },
-  list: {
-    paddingHorizontal: spacing.md,
-    paddingBottom: spacing.xxl,
-    paddingTop: spacing.sm,
-  },
-  card: {
-    marginBottom: spacing.md,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  badge: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    borderRadius: borderRadius.round,
-  },
-  badgeActive: { backgroundColor: colors.success + '20' },
-  badgeTextActive: { color: colors.success },
-  badgeMuted: { backgroundColor: colors.border },
-  badgeTextMuted: { color: colors.textSecondary },
-  empty: { paddingVertical: spacing.xxl, alignItems: 'center' },
-});

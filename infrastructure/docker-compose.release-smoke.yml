@@ -1,0 +1,47 @@
+name: rota-release-smoke-20261110
+x-runtime-env: &runtime-env
+  NODE_ENV: production
+  PORT: "8080"
+  DATABASE_URL: postgres://postgres:r3-disposable-only@rota-phase3-obs-postgres:5432/rota_release_smoke_20261110
+  REDIS_URL: redis://rota-phase3-obs-redis:6379
+  JWT_SECRET: release-smoke-dummy-only
+  CORS_ORIGIN: https://rota.invalid
+  FLW_ENV: sandbox
+  FLW_SECRET_KEY: release-smoke-dummy-only
+  FLW_SECRET_HASH: release-smoke-dummy-only
+  FLW_BASE_URL: http://127.0.0.1:9
+  AUTH_MAIL_KEY: "1111111111111111111111111111111111111111111111111111111111111111"
+  MAIL_API_KEY: release-smoke-dummy-only
+  MAIL_FROM: smoke@example.invalid
+  MAIL_API_URL: https://127.0.0.1:9
+  EXPO_PUSH_URL: http://127.0.0.1:9
+  EXPO_PUSH_RECEIPTS_URL: http://127.0.0.1:9
+  SENTRY_DSN: ""
+  EXPO_PUBLIC_SENTRY_DSN: ""
+  SENTRY_AUTH_TOKEN: ""
+  JOB_QUEUE_NAME: rota-release-smoke-20261110
+  JOB_POLL_MS: "100"
+services:
+  api:
+    container_name: rota-release-api-20261110
+    image: rota-graduation-release:2026-11-10
+    pull_policy: never
+    environment: *runtime-env
+  worker:
+    container_name: rota-release-worker-20261110
+    image: rota-graduation-release:2026-11-10
+    pull_policy: never
+    environment: *runtime-env
+    command: [node, apps/api/dist/worker.js]
+    healthcheck: {disable: true}
+  client:
+    profiles: [tools]
+    image: rota-graduation-release:2026-11-10
+    pull_policy: never
+    environment: *runtime-env
+    entrypoint: [node]
+    healthcheck: {disable: true}
+networks:
+  default:
+    external: true
+    name: rota-phase3-observability-tests_default

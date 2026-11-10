@@ -1,3 +1,4 @@
+import { logEvent } from './observability';
 import { AsyncLocalStorage } from 'async_hooks';
 export const primaryReadContext=new AsyncLocalStorage<boolean>();
 import crypto from 'crypto';
@@ -61,8 +62,8 @@ export const getCache = async <T>(key: string): Promise<T | null> => {
     const raw = await redisClient.get(key);
     if (!raw) return null;
     return JSON.parse(raw) as T;
-  } catch (err) {
-    console.warn(`[cache] Error reading key ${key}:`, err instanceof Error ? err.message : String(err));
+  } catch {
+    logEvent('cache.error', { outcome: 'unexpected' }, 'warn');
     return null;
   }
 };
@@ -75,8 +76,8 @@ export const setCache = async <T>(key: string, data: T, ttlSeconds: number): Pro
   try {
     if (!redisClient.isReady) return;
     await redisClient.setEx(key, ttlSeconds, JSON.stringify(data));
-  } catch (err) {
-    console.warn(`[cache] Error setting key ${key}:`, err instanceof Error ? err.message : String(err));
+  } catch {
+    logEvent('cache.error', { outcome: 'unexpected' }, 'warn');
   }
 };
 
@@ -88,8 +89,8 @@ export const deleteCache = async (key: string): Promise<void> => {
   try {
     if (!redisClient.isReady) return;
     await redisClient.del(key);
-  } catch (err) {
-    console.warn(`[cache] Error deleting key ${key}:`, err instanceof Error ? err.message : String(err));
+  } catch {
+    logEvent('cache.error', { outcome: 'unexpected' }, 'warn');
   }
 };
 
@@ -107,8 +108,8 @@ export const deleteCachePattern = async (pattern: string): Promise<void> => {
     if (keys.length > 0) {
       await redisClient.del(keys);
     }
-  } catch (err) {
-    console.warn(`[cache] Error deleting pattern ${pattern}:`, err instanceof Error ? err.message : String(err));
+  } catch {
+    logEvent('cache.error', { outcome: 'unexpected' }, 'warn');
   }
 };
 

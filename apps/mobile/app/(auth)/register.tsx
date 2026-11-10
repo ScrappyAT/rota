@@ -1,3 +1,5 @@
+import { postAuthDestination, readInvitation } from '../../src/services/invitationLinks';
+import { authStorage } from '../../src/storage/authStorage';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
@@ -27,6 +29,7 @@ export default function RegisterScreen() {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
+  useEffect(() => { void readInvitation(authStorage).then(pending => { if (pending?.email) setEmail(current => current || pending.email!); }); }, []);
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
@@ -165,7 +168,7 @@ export default function RegisterScreen() {
 
     if (res.success && res.data) {
       await login(res.data);
-      router.replace('/');
+      router.replace(await postAuthDestination(authStorage));
     } else {
       Alert.alert('Registration failed', res.error?.message || 'Unknown error');
     }

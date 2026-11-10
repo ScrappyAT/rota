@@ -1,3 +1,5 @@
+import { Share } from 'react-native';
+import { invitationLink } from '../../src/services/invitationLinks';
 import { useState } from 'react';
 import { View, Text, StyleSheet, Alert } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
@@ -16,6 +18,7 @@ export default function InviteMemberScreen() {
   const [role, setRole] = useState<Role>(Roles.STAFF);
   const [loading, setLoading] = useState(false);
   const [code, setCode] = useState('');
+  const [link, setLink] = useState('');
   const [expiresAt, setExpiresAt] = useState('');
   const [copied, setCopied] = useState(false);
 
@@ -33,11 +36,12 @@ export default function InviteMemberScreen() {
     if (res.success && res.data) {
       const invitationCode = res.data.code || res.data.token;
       setCode(invitationCode);
+      if (res.data.expiresAt) setLink(invitationLink(invitationCode, email.trim(), res.data.expiresAt));
       if (res.data.expiresAt) {
         const date = new Date(res.data.expiresAt);
         setExpiresAt(date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
       }
-      Alert.alert('Success', '6-digit invitation code generated! Share this code with the user.');
+      Alert.alert('Success', '6-digit invitation code generated! Share the invitation link with the user.');
     } else {
       Alert.alert('Error', res.error?.message || 'Failed to invite member');
     }
@@ -106,6 +110,8 @@ export default function InviteMemberScreen() {
             Share this 6-digit code with <Text style={{ fontWeight: 'bold' }}>{email}</Text>. They must sign in with this email to accept.
           </Text>
 
+          <Button title="Share invitation link" disabled={!link} onPress={() => { void Share.share({ message: `Join my Rota team: ${link}` }).catch(() => Alert.alert('Could not share', 'Use Copy link instead.')); }} />
+          <Button title="Copy link" disabled={!link} onPress={() => { void copyToClipboard(link); }} />
           <Button
             title={copied ? '✓ Copied to Clipboard!' : 'Copy Code'}
             variant="secondary"

@@ -74,8 +74,8 @@ export const authStorage: IAuthStorage = {
       if (storage) {
         try {
           return storage.getItem(key);
-        } catch (err) {
-          console.warn(`[authStorage:web] Failed to read key "${key}" from localStorage:`, err);
+        } catch {
+          console.warn('[storage] Operation unavailable');
         }
       }
       return memoryStore.get(key) ?? null;
@@ -84,8 +84,8 @@ export const authStorage: IAuthStorage = {
     // Native platforms (iOS / Android)
     try {
       return await SecureStore.getItemAsync(key);
-    } catch (err) {
-      console.warn(`[authStorage:native] Failed to read key "${key}" from SecureStore:`, err);
+    } catch {
+      console.warn('[storage] Operation unavailable');
       return memoryStore.get(key) ?? null;
     }
   },
@@ -98,8 +98,8 @@ export const authStorage: IAuthStorage = {
           storage.setItem(key, value);
           memoryStore.set(key, value);
           return;
-        } catch (err) {
-          console.warn(`[authStorage:web] Failed to write key "${key}" to localStorage:`, err);
+        } catch {
+          console.warn('[storage] Operation unavailable');
         }
       }
       memoryStore.set(key, value);
@@ -110,8 +110,8 @@ export const authStorage: IAuthStorage = {
     try {
       await SecureStore.setItemAsync(key, value);
       memoryStore.set(key, value);
-    } catch (err) {
-      console.warn(`[authStorage:native] Failed to write key "${key}" to SecureStore:`, err);
+    } catch {
+      console.warn('[storage] Operation unavailable');
       memoryStore.set(key, value);
     }
   },
@@ -122,8 +122,8 @@ export const authStorage: IAuthStorage = {
       if (storage) {
         try {
           storage.removeItem(key);
-        } catch (err) {
-          console.warn(`[authStorage:web] Failed to delete key "${key}" from localStorage:`, err);
+        } catch {
+          console.warn('[storage] Operation unavailable');
         }
       }
       memoryStore.delete(key);
@@ -134,8 +134,8 @@ export const authStorage: IAuthStorage = {
     try {
       await SecureStore.deleteItemAsync(key);
       memoryStore.delete(key);
-    } catch (err) {
-      console.warn(`[authStorage:native] Failed to delete key "${key}" from SecureStore:`, err);
+    } catch {
+      console.warn('[storage] Operation unavailable');
       memoryStore.delete(key);
     }
   },

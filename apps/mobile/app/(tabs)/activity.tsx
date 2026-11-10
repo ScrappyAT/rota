@@ -1,3 +1,7 @@
+import { useRef } from 'react';
+import { pageRequestGate, uniqueItems } from '../../src/query/mobileState';
+import { useNetwork } from '../../src/context/NetworkContext';
+import { Button } from '../../src/components/ui/Button';
 import { FlatList, RefreshControl, StyleSheet, Text, View, ActivityIndicator } from 'react-native';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { fetchActivity } from '../../src/api/activity';
@@ -43,16 +47,18 @@ const payloadDetail = (type: string, payload: Record<string, unknown>): string =
 export default function ActivityScreen() {
   const { team } = useTeam();
   const teamId = team?.id ?? '';
+  const { isOffline } = useNetwork();
+  const gate = useRef(pageRequestGate());
 
   const query = useInfiniteQuery({
     queryKey: ['activity', teamId],
-    enabled: Boolean(teamId),
+    enabled: Boolean(teamId) && !isOffline,
     queryFn: ({ pageParam }) => fetchActivity(teamId, { limit: 20, cursor: pageParam ?? undefined }),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
   });
 
-  const items = query.data?.pages.flatMap((p) => p.items) ?? [];
+  const items = uniqueItems(query.data?.pages.flatMap((p) => p.items) ?? []);
 
   const renderItem = ({ item }: { item: ActivityItem }) => {
     const color = TYPE_COLORS[item.type] ?? defaultColor;
@@ -71,24 +77,25 @@ export default function ActivityScreen() {
     <View style={styles.container}>
       <TeamGate>
         <TeamSelector />
-        {query.isError ? (
-          <ErrorState message="Could not load activity." />
+        {query.isError && !items.length ? (
+          <View><ErrorState message="Could not load activity." /><Button title="Retry" disabled={isOffline} onPress={() => { void (query.isFetchNextPageError ? query.fetchNextPage({ cancelRefetch: false }) : query.refetch()); }} /></View>
         ) : (
           <FlatList
+            ListHeaderComponent={query.isError && !query.isFetchNextPageError ? <View><Text>Could not refresh activity.</Text><Button title="Retry refresh" disabled={isOffline} onPress={() => { void query.refetch(); }} /></View> : null}
             data={items}
             keyExtractor={(item) => item.id}
             renderItem={renderItem}
             contentContainerStyle={styles.list}
             refreshControl={
-              <RefreshControl refreshing={query.isRefetching} onRefresh={() => query.refetch()} />
+              <RefreshControl refreshing={query.isRefetching && !query.isFetchingNextPage} onRefresh={() => { if (!isOffline) void query.refetch(); }} />
             }
             onEndReached={() => {
-              if (query.hasNextPage) query.fetchNextPage();
+              void gate.current(!isOffline && Boolean(query.hasNextPage) && !query.isFetching, () => query.fetchNextPage({ cancelRefetch: false }));
             }}
             onEndReachedThreshold={0.4}
-            ListFooterComponent={query.isFetchingNextPage ? <ActivityIndicator /> : null}
+            ListFooterComponent={query.isFetchingNextPage ? <ActivityIndicator accessibilityLabel="Loading more activity" /> : query.isFetchNextPageError ? <View><Text>Could not load more activity.</Text><Button title="Retry next page" disabled={isOffline} onPress={() => { void gate.current(!query.isFetching, () => query.fetchNextPage({ cancelRefetch: false })); }} /></View> : !query.hasNextPage && items.length > 0 ? <Text style={styles.empty}>You have reached the end.</Text> : null}
             ListEmptyComponent={
-              query.isPending ? null : <Text style={styles.empty}>No activity yet.</Text>
+              isOffline ? <Text>Connect to load activity.</Text> : query.isPending ? <ActivityIndicator accessibilityLabel="Loading activity" /> : <Text style={styles.empty}>No activity yet.</Text>
             }
           />
         )}

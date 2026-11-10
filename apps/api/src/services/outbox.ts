@@ -1,5 +1,6 @@
 import { PoolClient } from 'pg';
 import { HttpError } from '../http-error';
+import { logEvent } from './observability';
 export type JobKind = 'DOMAIN_EVENT' | 'NOTIFICATION' | 'PAYMENT_WEBHOOK' | 'PAYMENT_INITIALIZE' | 'PAYMENT_RECONCILE' | 'PAYMENT_VERIFY' | 'BILLING_RECHECK' | 'AUTH_EMAIL';
 export interface OutboxRow {
   id: string;
@@ -25,8 +26,10 @@ export const enqueueOutbox = async (client: PoolClient, input: {
   const values = [input.key, input.kind, input.teamId ?? null, JSON.stringify(input.payload), input.availableAt ?? new Date()];
   const inserted = await client.query(`INSERT INTO job_outbox(event_key,kind,team_id,payload,available_at)
     VALUES($1,$2,$3,$4,$5) ON CONFLICT(event_key) DO NOTHING RETURNING id`, values);
-  if (inserted.rows[0])
+  if (inserted.rows[0]) {
+    logEvent('job.intent_written', { jobId: inserted.rows[0].id, jobType: input.kind, teamId: input.teamId, paymentId: input.payload.paymentId, outcome: 'uncommitted' });
     return inserted.rows[0].id;
+  }
   const existing = await client.query(`SELECT id FROM job_outbox WHERE event_key=$1 AND kind=$2
     AND team_id IS NOT DISTINCT FROM $3::uuid AND payload=$4::jsonb`, values.slice(0, 4));
   if (!existing.rows[0])

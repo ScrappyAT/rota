@@ -1,10 +1,17 @@
 import { Request, Response, NextFunction } from 'express';
 import { ZodError } from 'zod';
 import { ApiResponse } from '@rota/shared';
+import { logEvent } from './services/observability';
+import { captureFailure } from './services/error-tracking';
 
 export const errorHandler = (err: any, req: Request, res: Response, next: NextFunction) => {
   if (res.headersSent) {
-    return next(err);
+    logEvent('request.error', { route: req.originalUrl, method: req.method, outcome: 'server_error' }, 'error');
+    captureFailure({ route: req.originalUrl, method: req.method });
+    // Express's default handler prints errors; forward a fixed error when it must close a partial response.
+    const safeError = new Error('Response stream failed');
+    safeError.stack = undefined;
+    return next(safeError);
   }
 
   if (err instanceof ZodError) {
@@ -27,7 +34,8 @@ export const errorHandler = (err: any, req: Request, res: Response, next: NextFu
   const status: number = err?.statusCode || err?.status || 500;
 
   if (status >= 500) {
-    console.error('Error:', err);
+    logEvent('request.error', { route: req.originalUrl, method: req.method, status, outcome: 'server_error' }, 'error');
+    captureFailure({ route: req.originalUrl, method: req.method, status });
   }
 
   const response: ApiResponse<null> = {

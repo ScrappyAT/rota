@@ -1,40 +1,34 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect } from 'react';
 import { AppState } from 'react-native';
-import { SettingsController, SettingsPatch } from '@rota/shared';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { SettingsPatch, UserSettings } from '@rota/shared';
 import { apiClient } from '../api/client';
 import { dataOrThrow } from '../api/ensure';
-import { UserSettings } from '@rota/shared';
 import { useAuth } from './AuthContext';
+import { offlineEpoch, offlineSessionCurrent } from '../storage/offlineData';
+import { settingsKey, settingsMutation, singleFlight } from '../query/mobileState';
 const SettingsContext = createContext<{
-  controller: SettingsController | null;
-  state: SettingsController['state'];
+  controller: { update: (value: SettingsPatch) => Promise<unknown>; refresh: () => Promise<unknown> } | null;
+  state: { settings: UserSettings | null; saving: boolean; loading: boolean; error: string | null };
 } | null>(null);
-export function SettingsProvider({ children }: {
-  children: React.ReactNode;
-}) {
-  const { user } = useAuth();
-  const controller = useMemo(() => user?.id ? new SettingsController({
-    get: async () => dataOrThrow(await apiClient.request<UserSettings>('/settings')),
-    patch: async (patch: SettingsPatch) => dataOrThrow(await apiClient.request<UserSettings>('/settings', { method: 'PATCH', body: JSON.stringify(patch) })),
-  }) : null, [user?.id]);
-  const [, render] = useState(0);
+export function SettingsProvider({ children }: { children: React.ReactNode }) {
+  const { user, readOnlySession } = useAuth(), client = useQueryClient(), id = user?.id ?? '';
+  const epoch = offlineEpoch();
+  const mutation = useMutation(settingsMutation(client, id, async value => {
+    if (readOnlySession) throw new Error('Reconnect to change settings');
+    return dataOrThrow(await apiClient.request<UserSettings>('/settings', { method: 'PATCH', body: JSON.stringify(value) }));
+  }, () => offlineSessionCurrent(id, epoch)));
+  const query = useQuery({ queryKey: settingsKey(id), enabled: Boolean(id) && !readOnlySession && !mutation.isPending, staleTime: 30_000,
+    queryFn: async () => dataOrThrow(await apiClient.request<UserSettings>('/settings')) });
   useEffect(() => {
-    if (!controller)
-      return;
-    const unsubscribe = controller.subscribe(() => render(value => value + 1));
-    void controller.refresh();
-    const sub = AppState.addEventListener('change', state => {
-      if (state === 'active')
-        void controller.refresh();
-    });
-    return () => { sub.remove(); unsubscribe(); controller.dispose(); };
-  }, [controller]);
-  const state = controller?.state ?? { settings: null, saving: false, loading: false, error: null };
-  return <SettingsContext.Provider value={{ controller, state }}>{children}</SettingsContext.Provider>;
+    const sub = AppState.addEventListener('change', state => { if (state === 'active' && id && !readOnlySession && !client.isMutating({ mutationKey: settingsKey(id) })) void client.invalidateQueries({ queryKey: settingsKey(id) }); });
+    return () => sub.remove();
+  }, [id, readOnlySession, client]);
+  const controller = user ? {
+    update: (value: SettingsPatch) => singleFlight('settings:' + id, () => mutation.mutateAsync(value)),
+    refresh: () => readOnlySession ? Promise.resolve() : query.refetch(),
+  } : null;
+  const error = mutation.error ? 'Could not save settings; your change was rolled back' : query.error?.message ?? null;
+  return <SettingsContext.Provider value={{ controller, state: { settings: query.data ?? null, saving: mutation.isPending || readOnlySession, loading: query.isFetching, error } }}>{children}</SettingsContext.Provider>;
 }
-export const useSettings = () => {
-  const context = useContext(SettingsContext);
-  if (!context)
-    throw new Error('SettingsProvider is required');
-  return context;
-};
+export function useSettings() { const value = useContext(SettingsContext); if (!value) throw new Error('SettingsProvider required'); return value; }

@@ -218,7 +218,7 @@ export const materializeSubscription = async (
     if (change) {
       const usage=await getSeatUsage(client,teamId);
       if (usage.members+usage.pendingInvites>change.toSeats!) throw new HttpError(409,'DOWNGRADE_CAPACITY_CONFLICT','Scheduled capacity below reserved seats');
-      await applyChange(client,change);
+      await applyChange(client,change,true);
       await snapshotSubscription(client,teamId,'scheduled change effective');
       sub=await getRawSubscription(client,teamId);
     }
@@ -431,7 +431,7 @@ export const openChange = async (
       await enqueueOutbox(client,{key:'schedule:'+change.id,kind:'BILLING_RECHECK',teamId,payload:{teamId},availableAt:computed.effectiveAt});
     } else if (computed.startsNewPeriod||computed.type===SubscriptionChangeType.RENEWAL) {
       await applyRenewal(client,change,now);
-    } else { await applyChange(client,change); }
+    } else { await applyChange(client,change,true); }
     await snapshotSubscription(client,teamId,computed.effectiveAt?'change scheduled':'change applied');
     await client.query(
       'UPDATE billing_invoices SET status = $1, paid_at = CURRENT_TIMESTAMP WHERE change_id = $2',
@@ -474,15 +474,19 @@ const insertPayment = async (
   return res.rows[0] as PaymentRow;
 };
 
-/** Applies a plan + seat change without extending the billing period. */
-const applyChange = async (client: PoolClient, change: ChangeRow): Promise<void> => {
+/** Applies a plan + seat change without extending the billing period.
+ * An unpaid/scheduled change cannot clear the existing cycle's failure window. */
+const applyChange = async (client: PoolClient, change: ChangeRow, preserveGrace = false): Promise<void> => {
   await client.query(
     `UPDATE team_subscriptions
-     SET plan_code = $1, seats = $2, status = $3,
-         last_renewal_failed_at=NULL,grace_ends_at=NULL,scheduled_change_id=NULL,revision=revision+1,
+     SET plan_code = $1, seats = $2,
+         status = CASE WHEN $5 AND last_renewal_failed_at IS NOT NULL THEN status ELSE $3 END,
+         last_renewal_failed_at=CASE WHEN $5 THEN last_renewal_failed_at ELSE NULL END,
+         grace_ends_at=CASE WHEN $5 THEN grace_ends_at ELSE NULL END,
+         scheduled_change_id=NULL,revision=revision+1,
          updated_at = CURRENT_TIMESTAMP
      WHERE team_id = $4`,
-    [change.toPlanCode, change.toSeats, SubscriptionStatus.ACTIVE, change.teamId]
+    [change.toPlanCode, change.toSeats, SubscriptionStatus.ACTIVE, change.teamId, preserveGrace]
   );
 };
 
@@ -520,6 +524,31 @@ export interface ReconcileResult {
   payment: PaymentRow;
   change: ChangeRow | null;
 }
+
+/** Only passive expiry/grace revisions may be crossed by a pending renewal.
+ * Immutable snapshots must prove an unbroken history of the same paid service.
+ * A paid change, new period, scheduled change or missing evidence stays fenced. */
+const renewalSurvivesLifecycleRevisions = async (
+  client: PoolClient, change: ChangeRow, current: SubscriptionRow
+): Promise<boolean> => {
+  const expected = change.expectedRevision, revision = current.revision;
+  if (change.type !== SubscriptionChangeType.RENEWAL || expected == null || revision == null || revision <= expected ||
+      current.scheduled_change_id || change.fromPlanCode !== current.plan_code || change.toPlanCode !== current.plan_code ||
+      change.fromSeats !== current.seats || change.toSeats !== current.seats) return false;
+  const { rows } = await client.query<{ detail: { reason?: string; subscription?: Record<string, unknown> } }>(
+    `SELECT detail FROM financial_ledger WHERE team_id=$1 AND kind='STATE'
+     AND (detail->'subscription'->>'revision')::integer BETWEEN $2 AND $3
+     ORDER BY (detail->'subscription'->>'revision')::integer`, [current.team_id, expected, revision]);
+  if (rows.length !== revision - expected + 1) return false;
+  return rows.every(({ detail }, index) => {
+    const state = detail.subscription;
+    return state?.revision === expected + index && state.team_id === current.team_id &&
+      state.plan_code === current.plan_code && state.seats === current.seats && !state.scheduled_change_id &&
+      typeof state.period_started_at === 'string' && new Date(state.period_started_at).getTime() === current.period_started_at.getTime() &&
+      typeof state.period_ends_at === 'string' && new Date(state.period_ends_at).getTime() === current.period_ends_at.getTime() &&
+      (index === 0 || detail.reason === 'status transition' || detail.reason === 'renewal failed');
+  });
+};
 
 /**
  * Reconciles gateway data against a PENDING on-site payment and — only when
@@ -597,32 +626,38 @@ export const reconcilePayment = async (
       SubscriptionChangeStatus.FAILED,
       payment.changeId,
     ]);
-    // A failed renewal of an otherwise-healthy active subscription opens a
-    // grace window. If it was already EXPIRED the state stays EXPIRED.
+    // The first verified failure opens one window for this service period,
+    // including a renewal initiated after expiry. Retries never extend/reopen it.
     const currentSub = await getRawSubscription(client, teamId);
+    const sameService = change?.type === SubscriptionChangeType.RENEWAL &&
+      change.fromPlanCode === currentSub.plan_code && change.toPlanCode === currentSub.plan_code &&
+      change.fromSeats === currentSub.seats && change.toSeats === currentSub.seats && !currentSub.scheduled_change_id;
+    const newerLegacyChange = sameService && change.expectedRevision == null ? await client.query(
+      "SELECT id FROM subscription_changes WHERE team_id=$1 AND status='PAID' AND created_at>$2 LIMIT 1", [teamId, change.createdAt]) : null;
     if (
-      change?.type === SubscriptionChangeType.RENEWAL &&
-      currentSub.status === SubscriptionStatus.ACTIVE &&
-      (change.expectedRevision == null || change.expectedRevision === currentSub.revision)
+      sameService && !newerLegacyChange?.rows.length &&
+      (currentSub.status === SubscriptionStatus.ACTIVE || currentSub.status === SubscriptionStatus.EXPIRED) &&
+      !currentSub.last_renewal_failed_at && !currentSub.grace_ends_at &&
+      (change.expectedRevision == null || change.expectedRevision === currentSub.revision ||
+        await renewalSurvivesLifecycleRevisions(client, change, currentSub))
     ) {
+      const graceEndsAt = addDays(now, billingConfig.graceDays);
       await client.query(
         `UPDATE team_subscriptions
-         SET last_renewal_failed_at = CURRENT_TIMESTAMP,
-             grace_ends_at = $1,
-             status=$2,revision=revision+1,
+         SET last_renewal_failed_at = $1,
+             grace_ends_at = $2,
+             status=$3,revision=revision+1,
              updated_at = CURRENT_TIMESTAMP
-         WHERE team_id = $3`,
+         WHERE team_id = $4`,
         [
-          addDays(now, billingConfig.graceDays),
+          now, graceEndsAt,
           SubscriptionStatus.PAST_DUE,
           teamId,
         ]
       );
-    }
-    if(change?.type===SubscriptionChangeType.RENEWAL&&currentSub.status===SubscriptionStatus.ACTIVE&&(change.expectedRevision==null||change.expectedRevision===currentSub.revision)) {
       await snapshotSubscription(client,teamId,'renewal failed');
       await addActivity(client,{teamId,actorId:change.actorId,type:'RENEWAL_FAILED',payload:{paymentId:payment.id}});
-      await enqueueOutbox(client,{key:'grace:'+payment.id,kind:'BILLING_RECHECK',teamId,payload:{teamId},availableAt:addDays(now,billingConfig.graceDays)});
+      await enqueueOutbox(client,{key:'grace:'+payment.id,kind:'BILLING_RECHECK',teamId,payload:{teamId},availableAt:graceEndsAt});
     }
     return { outcome: 'FAILED',payment:settledPayment,change };
   }
@@ -632,7 +667,8 @@ export const reconcilePayment = async (
     const currentPlan=await getPlan(client,current.plan_code);
     const newer=change.expectedRevision==null?await client.query(
       "SELECT id FROM subscription_changes WHERE team_id=$1 AND status='PAID' AND created_at>$2 LIMIT 1",[teamId,change.createdAt]):null;
-    const isSuperseded=(change.expectedRevision!=null&&change.expectedRevision!==current.revision)||payment.currency!==currentPlan.currency&&!currentPlan.is_free||Boolean(newer?.rows.length);
+    const revisionChanged = change.expectedRevision != null && change.expectedRevision !== current.revision;
+    const isSuperseded=(revisionChanged && !await renewalSurvivesLifecycleRevisions(client, change, current))||payment.currency!==currentPlan.currency&&!currentPlan.is_free||Boolean(newer?.rows.length);
     const quote=change.quote;
     await appendLedger(client,{teamId,eventKey:`charge:${payment.id}`,kind:'CHARGE',amountMinor:quote?.costMinor??verifiedMinor,currency:payment.currency,paymentId:payment.id,detail:{txRef:payment.txRef,receivedMinor:verifiedMinor}});
     if (quote?.creditMinor) await appendLedger(client,{teamId,eventKey:`proration-credit:${payment.id}`,kind:'CREDIT',amountMinor:quote.creditMinor,currency:payment.currency,paymentId:payment.id,detail:{reason:'unused time'}});

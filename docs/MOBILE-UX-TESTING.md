@@ -33,3 +33,33 @@ This document outlines the manual testing checklist for the UI and UX refinement
 ## 6. General UX
 - [ ] **Safe Area**: Ensure headers and footers are not obscured by device notches or navigation bars.
 - [ ] **Buttons & Inputs**: Verify the new rounded design system applies globally to inputs, buttons, and cards.
+
+
+## Graduation Phase 2 verification — not yet executed on a device
+
+Use an isolated test backend with mocked financial/mail/push providers. The
+following are manual acceptance checks, not passing claims from compilation or
+Jest. Existing demo recording/post completion is unchanged.
+
+- [ ] Owner shares/copies an invitation link. On a fresh installed app, open it,
+      register using its prefilled email, redeem and land in the invited team.
+- [ ] Repeat through login/magic link; restart between link intake and login.
+- [ ] Wrong email, malformed link, expired and already-used codes show actionable
+      feedback. A post-redemption connection failure retries team selection
+      without another redemption.
+- [ ] Staff requests a swap under slow networking: pending appears immediately,
+      duplicate taps issue one request, rejection restores the prior UI/error.
+      After rejection/cancellation, notification/refetch allows a new request.
+- [ ] Load upcoming assigned shifts for two users/teams; force-close, go offline,
+      reopen within the read lease, and verify correct rows/team, read-only
+      banner and last-updated time. No other user's/team's rows appear.
+- [ ] Confirm a successful empty response removes old upcoming rows. Log out or
+      revoke membership online, then relaunch offline and verify purged data.
+- [ ] Activity shows initial loading, empty, error/retry, next-page spinner/retry,
+      and end message; fast scrolling does not duplicate requests. Pull refresh
+      preserves rows until the new response arrives.
+- [ ] On two devices, change settings and foreground the other: returned server
+      timestamps and values sync. A rejected save rolls back the original value.
+- [ ] Owner and Manager create, edit title/notes/start/end, assign/unassign,
+      cancel/reopen and delete shifts. Date navigation works across month ends.
+      Staff and outsiders remain denied by the server.

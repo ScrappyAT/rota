@@ -1,3 +1,4 @@
+import { logEvent } from './services/observability';
 import { pool } from './db';
 import fs from 'fs';
 import path from 'path';
@@ -41,8 +42,8 @@ async function runMigrations() {
       }
     }
     console.log('Migrations completed successfully.');
-  } catch (error) {
-    console.error('Migration failed:', error);
+  } catch {
+    logEvent('database.error', { outcome: 'unexpected' }, 'warn');
     process.exit(1);
   } finally {
     client.release();

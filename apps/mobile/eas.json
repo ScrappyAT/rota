@@ -17,11 +17,15 @@
     "preview": {
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://rota-production-84ef.up.railway.app"
+        "EXPO_PUBLIC_API_URL": "https://rota-production-84ef.up.railway.app",
+        "EXPO_PUBLIC_SENTRY_DSN": "disabled",
+        "SENTRY_AUTH_TOKEN": "disabled",
+        "SENTRY_DISABLE_AUTO_UPLOAD": "1"
       },
       "android": {
         "buildType": "apk"
-      }
+      },
+      "environment": "preview"
     },
     "production": {
       "autoIncrement": true
