@@ -54,6 +54,11 @@ RUN npm run build -w @rota/api \
 # ---------------------------------------------------------------------------
 FROM node:24-bookworm-slim AS runtime
 
+# Install PostgreSQL client tools for logical backup capabilities
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends postgresql-client \
+  && rm -rf /var/lib/apt/lists/*
+
 ENV NODE_ENV=production
 ENV PORT=8080
 

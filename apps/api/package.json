@@ -18,7 +18,8 @@
     "worker": "node dist/worker.js",
     "worker:dev": "ts-node src/worker.ts",
     "jobs:status": "node dist/jobs-cli.js",
-    "jobs:retry": "node dist/jobs-cli.js retry"
+    "jobs:retry": "node dist/jobs-cli.js retry",
+    "db:backup-and-migrate": "ts-node src/migration-backup-runner.ts"
   },
   "dependencies": {
     "@rota/shared": "*",
