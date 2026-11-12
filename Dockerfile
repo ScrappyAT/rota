@@ -54,9 +54,14 @@ RUN npm run build -w @rota/api \
 # ---------------------------------------------------------------------------
 FROM node:24-bookworm-slim AS runtime
 
-# Install PostgreSQL client tools for logical backup capabilities
+# Install PostgreSQL 18 client tools for logical backup capabilities
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends postgresql-client \
+  && apt-get install -y --no-install-recommends curl ca-certificates gnupg \
+  && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /etc/apt/trusted.gpg.d/postgresql.gpg \
+  && echo 'deb http://apt.postgresql.org/pub/repos/apt bookworm-pgdg main' > /etc/apt/sources.list.d/pgdg.list \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends postgresql-client-18 \
+  && apt-get purge -y --auto-remove curl gnupg \
   && rm -rf /var/lib/apt/lists/*
 
 ENV NODE_ENV=production
