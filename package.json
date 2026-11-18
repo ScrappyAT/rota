@@ -28,6 +28,7 @@
     "demo:sharding": "npm run demo:sharding -w @rota/api",
     "test:sharding": "npm run test:sharding -w @rota/api",
     "test:r1": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-r1.ps1",
+    "start:combined": "npm run start:combined -w @rota/api",
     "worker": "npm run worker -w @rota/api",
     "worker:dev": "npm run worker:dev -w @rota/api",
     "test:r2": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-r2.ps1",
