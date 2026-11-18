@@ -146,12 +146,44 @@ export const verifyWebhookHash = (received: string | undefined): boolean => {
 };
 /** Read-only recovery for an existing merchant reference; never starts a checkout. */
 export const verifyTransactionByReference = async (txRef: string): Promise<VerifiedTransaction> => {
-  if (!env.FLW_SECRET_KEY) throw new HttpError(503,'PAYMENTS_UNAVAILABLE','Payment gateway is not configured');
-  const response = await fetch(`${billingConfig.flwBaseUrl}/v3/transactions/verify_by_reference?tx_ref=${encodeURIComponent(txRef)}`, {
-    method:'GET',signal:AbortSignal.timeout(15000),headers:{Authorization:`Bearer ${env.FLW_SECRET_KEY}`},
-  });
-  if (!response.ok) throw new Error('Payment reference is not yet verifiable');
-  const body=await response.json(); const data=body?.data;
-  if (!data || data.id==null) throw new Error('Payment reference is not yet verifiable');
-  return {transactionId:String(data.id),txRef:typeof data.tx_ref==='string'?data.tx_ref:'',amountMajor:data.amount,currency:typeof data.currency==='string'?data.currency:'',status:typeof data.status==='string'?data.status:''};
+  if (!env.FLW_SECRET_KEY) throw new HttpError(503, 'PAYMENTS_UNAVAILABLE', 'Payment gateway is not configured');
+
+  let response: Response;
+  try {
+    response = await fetch(`${billingConfig.flwBaseUrl}/v3/transactions/verify_by_reference?tx_ref=${encodeURIComponent(txRef)}`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(15000),
+      headers: { Authorization: `Bearer ${env.FLW_SECRET_KEY}` },
+    });
+  } catch {
+    throw new HttpError(502, 'PAYMENT_GATEWAY_UNREACHABLE', 'Payment gateway is unreachable');
+  }
+
+  if (response.status === 401) {
+    throw new HttpError(401, 'GATEWAY_AUTHENTICATION_ERROR', 'Payment gateway authentication failed');
+  }
+
+  if (response.status === 404) {
+    throw new HttpError(404, 'TRANSACTION_NOT_FOUND', 'Payment reference not found at gateway; checkout may be pending');
+  }
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => null);
+    const msg = typeof errorBody?.message === 'string' ? errorBody.message : 'Payment verification request failed';
+    throw new HttpError(response.status >= 500 ? 502 : response.status, response.status >= 500 ? 'PAYMENT_GATEWAY_ERROR' : 'GATEWAY_REJECTED', msg);
+  }
+
+  const body = await response.json().catch(() => null);
+  const data = body?.data;
+  if (!data || data.id == null) {
+    throw new HttpError(404, 'TRANSACTION_NOT_FOUND', 'Payment reference returned no transaction data; checkout may be pending');
+  }
+
+  return {
+    transactionId: String(data.id),
+    txRef: typeof data.tx_ref === 'string' ? data.tx_ref : '',
+    amountMajor: data.amount,
+    currency: typeof data.currency === 'string' ? data.currency : '',
+    status: typeof data.status === 'string' ? data.status : '',
+  };
 };

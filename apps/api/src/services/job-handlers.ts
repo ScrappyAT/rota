@@ -1,9 +1,10 @@
 import { handleAuthEmail } from './auth-email';
 import { PoolClient } from 'pg';
 import { UnrecoverableError } from 'bullmq';
+import { HttpError } from '../http-error';
 import { initializeCheckout, verifyTransaction, verifyTransactionByReference, VerifiedTransaction } from '../billing/flutterwave';
 import { materializeSubscription, reconcilePayment } from '../billing/service';
-import { OutboxRow } from './outbox';
+import { OutboxRow, DeferJob } from './outbox';
 import { deliverPush, checkPushReceipts } from './push-delivery';
 import { notify } from './notifications';
 import { invalidateActivity, invalidateRoster, invalidateShifts } from './cache';
@@ -14,7 +15,7 @@ export const paymentResponseReady = async (client: PoolClient, paymentId: string
 };
 const settleVerified = async (client: PoolClient, teamId: string, txRef: string, gateway: VerifiedTransaction, now: Date) => {
   if (!['successful', 'failed', 'cancelled'].includes(gateway.status.toLowerCase()))
-    throw new Error('Provider payment is not terminal yet');
+    throw new HttpError(409, 'PAYMENT_NOT_TERMINAL', 'Provider payment is not terminal yet: ' + gateway.status);
   await client.query('BEGIN');
   try {
     const result = await reconcilePayment(client, teamId, txRef, gateway, now);
@@ -75,6 +76,17 @@ export const handleOutbox = async (client: PoolClient, job: OutboxRow, now: Date
     const payment = (await client.query('SELECT * FROM payment_transactions WHERE id=$1', [data.paymentId])).rows[0];
     if (!payment || payment.status !== 'PENDING')
       return null;
+    if (payment.initialization_state === 'QUEUED' || payment.initialization_state === 'CLAIMED') {
+      const ageMs = now.getTime() - new Date(payment.created_at).getTime();
+      if (ageMs < 120000) {
+        // Initialization is in-flight; defer reconciliation to avoid premature verification
+        throw new DeferJob(new Date(now.getTime() + 15000));
+      }
+      if (payment.initialization_state === 'CLAIMED') {
+        // Abandoned claim after >2m: mark ambiguous before checking provider
+        await client.query("UPDATE payment_transactions SET initialization_state='AMBIGUOUS' WHERE id=$1 AND status='PENDING' AND initialization_state='CLAIMED'", [payment.id]);
+      }
+    }
     const gateway = await verifyTransactionByReference(payment.tx_ref);
     return settleVerified(client, payment.team_id, payment.tx_ref, gateway, now);
   }
