@@ -134,19 +134,27 @@ describe('Payment Reconciliation & Gateway Recovery Regression Tests', () => {
   });
 
   describe('3. Ordering Safeguards with Initialization & State Transitions', () => {
-    it('defers reconciliation when checkout initialization is still QUEUED or CLAIMED', async () => {
+    it('defers reconciliation when checkout initialization is still QUEUED (under 5m)', async () => {
       const fakeClient = {
-        query: jest.fn().mockResolvedValue({
-          rows: [
-            {
-              id: 'payment-1',
-              status: 'PENDING',
-              initialization_state: 'QUEUED',
-              created_at: new Date(),
-              tx_ref: 'tx-queued-1',
-              team_id: 'team-1',
-            },
-          ],
+        query: jest.fn().mockImplementation(async (sql: string) => {
+          if (sql.includes('SELECT * FROM payment_transactions WHERE id=$1')) {
+            return {
+              rows: [
+                {
+                  id: 'payment-1',
+                  status: 'PENDING',
+                  initialization_state: 'QUEUED',
+                  created_at: new Date(Date.now() - 30000), // 30s old
+                  tx_ref: 'tx-queued-1',
+                  team_id: 'team-1',
+                },
+              ],
+            };
+          }
+          if (sql.includes("SELECT status FROM job_outbox WHERE event_key = 'initialize:'")) {
+            return { rows: [{ status: 'PENDING' }] };
+          }
+          return { rows: [] };
         }),
       } as unknown as import('pg').PoolClient;
 
@@ -168,25 +176,169 @@ describe('Payment Reconciliation & Gateway Recovery Regression Tests', () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it('transitions stale CLAIMED payment to AMBIGUOUS after 2 minutes before verifying', async () => {
-      const staleTime = new Date(Date.now() - 150000); // 2.5 minutes ago
-      const mockQueries: string[] = [];
+    it('transitions long-queued initialization (>5m) to MANUAL_REVIEW without calling provider', async () => {
+      const mockQueries: Array<{ sql: string; values?: unknown[] }> = [];
       const fakeClient = {
-        query: jest.fn().mockImplementation(async (sql: string) => {
-          mockQueries.push(sql);
-          if (sql.includes('SELECT * FROM payment_transactions')) {
+        query: jest.fn().mockImplementation(async (sql: string, values?: unknown[]) => {
+          mockQueries.push({ sql, values });
+          if (sql.includes('SELECT * FROM payment_transactions WHERE id=$1')) {
             return {
               rows: [
                 {
-                  id: 'payment-stale',
+                  id: 'payment-stuck-queue',
                   status: 'PENDING',
-                  initialization_state: 'CLAIMED',
-                  created_at: staleTime,
-                  tx_ref: 'tx-stale-ref',
+                  initialization_state: 'QUEUED',
+                  created_at: new Date(Date.now() - 360000), // 6 minutes old
+                  tx_ref: 'tx-stuck-queued',
                   team_id: 'team-1',
                 },
               ],
             };
+          }
+          if (sql.includes("SELECT status FROM job_outbox WHERE event_key = 'initialize:'")) {
+            return { rows: [{ status: 'QUEUED' }] };
+          }
+          return { rows: [] };
+        }),
+      } as unknown as import('pg').PoolClient;
+
+      const job = {
+        id: 'job-stuck-queue',
+        event_key: 'reconcile:payment-stuck-queue',
+        kind: 'PAYMENT_RECONCILE' as const,
+        team_id: 'team-1',
+        payload: { paymentId: 'payment-stuck-queue' },
+        status: 'RUNNING',
+        generation: 1,
+        attempts: 1,
+        failures: 0,
+        dispatch_failures: 0,
+        available_at: new Date(),
+      };
+
+      const result = await handleOutbox(fakeClient, job, new Date());
+      expect(result).toEqual({ outcome: 'STUCK_QUEUED_MANUAL_REVIEW' });
+
+      // Verifies state was transitioned to MANUAL_REVIEW
+      const reviewUpdate = mockQueries.find((q) => q.sql.includes("initialization_state='MANUAL_REVIEW'"));
+      expect(reviewUpdate).toBeDefined();
+
+      // Provider verification must NOT be called for an uninitialized payment
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('transitions QUEUED payment to MANUAL_REVIEW immediately if initialize job is DEAD', async () => {
+      const mockQueries: Array<{ sql: string; values?: unknown[] }> = [];
+      const fakeClient = {
+        query: jest.fn().mockImplementation(async (sql: string, values?: unknown[]) => {
+          mockQueries.push({ sql, values });
+          if (sql.includes('SELECT * FROM payment_transactions WHERE id=$1')) {
+            return {
+              rows: [
+                {
+                  id: 'payment-dead-init',
+                  status: 'PENDING',
+                  initialization_state: 'QUEUED',
+                  created_at: new Date(Date.now() - 60000), // only 1 min old
+                  tx_ref: 'tx-dead-init',
+                  team_id: 'team-1',
+                },
+              ],
+            };
+          }
+          if (sql.includes("SELECT status FROM job_outbox WHERE event_key = 'initialize:'")) {
+            return { rows: [{ status: 'DEAD' }] };
+          }
+          return { rows: [] };
+        }),
+      } as unknown as import('pg').PoolClient;
+
+      const job = {
+        id: 'job-dead-init',
+        event_key: 'reconcile:payment-dead-init',
+        kind: 'PAYMENT_RECONCILE' as const,
+        team_id: 'team-1',
+        payload: { paymentId: 'payment-dead-init' },
+        status: 'RUNNING',
+        generation: 1,
+        attempts: 1,
+        failures: 0,
+        dispatch_failures: 0,
+        available_at: new Date(),
+      };
+
+      const result = await handleOutbox(fakeClient, job, new Date());
+      expect(result).toEqual({ outcome: 'STUCK_QUEUED_MANUAL_REVIEW' });
+
+      const reviewUpdate = mockQueries.find((q) => q.sql.includes("initialization_state='MANUAL_REVIEW'"));
+      expect(reviewUpdate).toBeDefined();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('defers reconciliation for a delayed claim on an old payment record (uses updated_at claim age)', async () => {
+      // Payment created 15 minutes ago, but only claimed 10 seconds ago (updated_at = now - 10s)
+      const fakeClient = {
+        query: jest.fn().mockImplementation(async (sql: string) => {
+          if (sql.includes('SELECT * FROM payment_transactions WHERE id=$1')) {
+            return {
+              rows: [
+                {
+                  id: 'payment-delayed-claim',
+                  status: 'PENDING',
+                  initialization_state: 'CLAIMED',
+                  created_at: new Date(Date.now() - 900000), // 15 minutes ago
+                  updated_at: new Date(Date.now() - 10000),  // 10 seconds ago
+                  tx_ref: 'tx-delayed-claim',
+                  team_id: 'team-1',
+                },
+              ],
+            };
+          }
+          return { rows: [] };
+        }),
+      } as unknown as import('pg').PoolClient;
+
+      const job = {
+        id: 'job-delayed-claim',
+        event_key: 'reconcile:payment-delayed-claim',
+        kind: 'PAYMENT_RECONCILE' as const,
+        team_id: 'team-1',
+        payload: { paymentId: 'payment-delayed-claim' },
+        status: 'RUNNING',
+        generation: 1,
+        attempts: 1,
+        failures: 0,
+        dispatch_failures: 0,
+        available_at: new Date(),
+      };
+
+      // Must defer because the claim is active (10s old < 60s), not abandoned
+      await expect(handleOutbox(fakeClient, job, new Date())).rejects.toThrow(DeferJob);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('transitions genuinely stale CLAIMED payment (>60s claim age) to AMBIGUOUS before verifying', async () => {
+      const mockQueries: string[] = [];
+      const fakeClient = {
+        query: jest.fn().mockImplementation(async (sql: string) => {
+          mockQueries.push(sql);
+          if (sql.includes('SELECT * FROM payment_transactions WHERE id=$1')) {
+            return {
+              rows: [
+                {
+                  id: 'payment-stale-claim',
+                  status: 'PENDING',
+                  initialization_state: 'CLAIMED',
+                  created_at: new Date(Date.now() - 300000),
+                  updated_at: new Date(Date.now() - 75000), // 75 seconds ago (>60s claim age)
+                  tx_ref: 'tx-stale-claim-ref',
+                  team_id: 'team-1',
+                },
+              ],
+            };
+          }
+          if (sql.includes("UPDATE payment_transactions SET initialization_state='AMBIGUOUS'")) {
+            return { rows: [{ id: 'payment-stale-claim' }] };
           }
           return { rows: [] };
         }),
@@ -199,11 +351,11 @@ describe('Payment Reconciliation & Gateway Recovery Regression Tests', () => {
       } as Response);
 
       const job = {
-        id: 'job-stale',
-        event_key: 'reconcile:payment-stale',
+        id: 'job-stale-claim',
+        event_key: 'reconcile:payment-stale-claim',
         kind: 'PAYMENT_RECONCILE' as const,
         team_id: 'team-1',
-        payload: { paymentId: 'payment-stale' },
+        payload: { paymentId: 'payment-stale-claim' },
         status: 'RUNNING',
         generation: 1,
         attempts: 1,
@@ -212,7 +364,6 @@ describe('Payment Reconciliation & Gateway Recovery Regression Tests', () => {
         available_at: new Date(),
       };
 
-      // Fails with 404 because customer never completed payment, but updates state to AMBIGUOUS first
       await expect(handleOutbox(fakeClient, job, new Date())).rejects.toMatchObject({
         statusCode: 404,
         code: 'TRANSACTION_NOT_FOUND',
