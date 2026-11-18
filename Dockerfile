@@ -87,4 +87,4 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
 
 # Run migrations once as an explicitly approved release job before API/workers.
 # Never apply schema changes automatically on API restart or horizontal scale-out.
-CMD ["node", "apps/api/dist/index.js"]
+CMD ["node", "apps/api/dist/combined-server.js"]

@@ -46,7 +46,7 @@ check('compiled shared schema', () => {
   assert(apiRequire('@rota/shared').EmailActionSchema.safeParse({ email: 'smoke@example.invalid' }).success);
 });
 check('compiled API/worker/migrator artifacts', () => {
-  for (const file of ['index.js', 'worker.js', 'migrate.js', 'jobs-cli.js']) {
+  for (const file of ['index.js', 'worker.js', 'migrate.js', 'jobs-cli.js', 'combined-server.js']) {
     assert(fs.statSync(path.join(root, 'apps/api/dist', file)).isFile());
   }
   assert.equal(fs.readdirSync(path.join(root, 'apps/api/migrations')).filter(f => f.endsWith('.sql')).length, 9);
@@ -75,6 +75,9 @@ async function main() {
     });
     check('compiled worker import (no startup)', () => {
       assert.equal(typeof apiRequire('./dist/worker.js').runWorker, 'function');
+    });
+    check('compiled combined-server import (no startup)', () => {
+      assert.equal(typeof apiRequire('./dist/combined-server.js').startSupervisor, 'function');
     });
     const { redisClient } = apiRequire('./dist/redis.js');
     assert.equal(redisClient.isOpen, false);
