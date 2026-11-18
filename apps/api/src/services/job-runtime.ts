@@ -7,7 +7,22 @@ import { env } from '../env';
 import { HttpError } from '../http-error';
 import { handleOutbox } from './job-handlers';
 import { DeferJob, OutboxRow } from './outbox';
-export const jobBackoff = (failure: number): number => Math.min(60000, env.JOB_BACKOFF_MS * 2 ** Math.max(0, failure - 1));
+export const sanitizeErrorMessage = (message: string): string => {
+  if (!message || typeof message !== 'string') return '';
+  return message
+    .replace(/Bearer\s+[A-Za-z0-9_.-]+/gi, 'Bearer [REDACTED]')
+    .replace(/FLWSECK[A-Za-z0-9_-]+/gi, '[REDACTED_KEY]')
+    .replace(/(key|secret|token|password)=[^&\s]+/gi, '$1=[REDACTED]')
+    .replace(/\b(?:\d[ -]*?){13,19}\b/g, '[REDACTED_CARD]')
+    .slice(0, 500);
+};
+export const jobBackoff = (failure: number, kind?: string): number => {
+  if (kind === 'PAYMENT_RECONCILE') {
+    const base = env.JOB_BACKOFF_MS < 1000 ? env.JOB_BACKOFF_MS : 60000;
+    return Math.min(600000, base * 2 ** Math.max(0, failure - 1));
+  }
+  return Math.min(60000, env.JOB_BACKOFF_MS * 2 ** Math.max(0, failure - 1));
+};
 export const jobRedisConnection = (worker = false): ConnectionOptions => {
   const url = new URL(env.REDIS_URL);
   return {
@@ -59,16 +74,39 @@ export const processOutboxJob = async (pool: Pool, id: string, now = new Date())
       return;
     }
     if (row && locked) {
-      const dead = error instanceof UnrecoverableError || (error instanceof HttpError && error.statusCode < 500) || row.failures + 1 >= env.JOB_ATTEMPTS;
+      const isPendingReconcile = row.kind === 'PAYMENT_RECONCILE' &&
+        error instanceof HttpError &&
+        (error.code === 'TRANSACTION_NOT_FOUND' || error.code === 'PAYMENT_NOT_TERMINAL');
+      const dead = error instanceof UnrecoverableError ||
+        (error instanceof HttpError && error.statusCode < 500 && !isPendingReconcile) ||
+        row.failures + 1 >= env.JOB_ATTEMPTS;
       const sqlState = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' && /^[0-9A-Z]{5}$/.test(error.code) ? error.code : null;
       const code = error instanceof HttpError ? error.code : error instanceof UnrecoverableError ? 'UNRECOVERABLE' : sqlState ? 'DATABASE_' + sqlState : 'RETRYABLE';
-      const result = error instanceof HttpError ? { statusCode: error.statusCode, error: { code: error.code, message: error.message } } : null;
+      const sanitizedMessage = error instanceof Error ? sanitizeErrorMessage(error.message) : '';
+      const lastError = sanitizedMessage ? `${code}: ${sanitizedMessage}` : code;
+      const result = error instanceof HttpError
+        ? { statusCode: error.statusCode, error: { code: error.code, message: sanitizedMessage } }
+        : sanitizedMessage
+          ? { error: { code, message: sanitizedMessage } }
+          : null;
+      const nextDelay = jobBackoff(row.failures + 1, row.kind);
       await client.query(`UPDATE job_outbox SET failures=failures+1,status=$2,last_error=$3,result=$4,
-        next_dispatch_at=NOW()+($5::int*INTERVAL '1 millisecond') WHERE id=$1`, [id, dead ? 'DEAD' : 'QUEUED', code, JSON.stringify(result), jobBackoff(row.failures + 1)]);
+        next_dispatch_at=NOW()+($5::int*INTERVAL '1 millisecond') WHERE id=$1`, [id, dead ? 'DEAD' : 'QUEUED', lastError, JSON.stringify(result), nextDelay]);
       await client.query('UPDATE job_attempts SET outcome=$3,error=$4,finished_at=NOW() WHERE outbox_id=$1 AND attempt=$2', [id, row.attempts, dead ? 'DEAD' : 'RETRYABLE', code]);
       if (dead && row.kind === 'PAYMENT_RECONCILE')
         await client.query("UPDATE payment_transactions SET initialization_state='MANUAL_REVIEW' WHERE id=$1 AND status='PENDING'", [row.payload.paymentId]);
-      logEvent(dead ? 'job.dead' : 'job.retry', { jobId: id, jobType: row.kind, attempt: row.attempts, failureCount: row.failures + 1, durationMs: performance.now() - started, retryInMs: dead ? undefined : jobBackoff(row.failures + 1), outcome: dead ? 'dead' : 'retry', paymentId: row.payload.paymentId, teamId: row.team_id }, dead ? 'error' : 'warn');
+      const logData: Record<string, unknown> = {
+        source: 'jobs',
+        event: dead ? 'dead' : 'retry',
+        id,
+        kind: row.kind,
+        attempt: row.attempts,
+        code,
+      };
+      if (error instanceof HttpError) logData.statusCode = error.statusCode;
+      if (sanitizedMessage) logData.error = sanitizedMessage;
+      console.warn(JSON.stringify(logData));
+      logEvent(dead ? 'job.dead' : 'job.retry', { jobId: id, jobType: row.kind, attempt: row.attempts, failureCount: row.failures + 1, durationMs: performance.now() - started, retryInMs: dead ? undefined : nextDelay, outcome: dead ? 'dead' : 'retry', paymentId: row.payload.paymentId, teamId: row.team_id }, dead ? 'error' : 'warn');
       captureFailure({ jobId: id, jobType: row.kind, attempt: row.attempts, outcome: dead ? 'dead' : 'retry' });
       if (dead)
         throw new UnrecoverableError(code);
@@ -106,10 +144,10 @@ export const dispatchOutbox = async (pool: Pool, queue: Queue): Promise<number> 
     catch {
       const marked = await pool.query(`UPDATE job_outbox SET dispatch_failures=dispatch_failures+1,last_error='Redis publication failed',
         status=CASE WHEN dispatch_failures+1 >= $2 THEN 'DEAD' ELSE status END,next_dispatch_at=NOW()+($3::int*INTERVAL '1 millisecond')
-        WHERE id=$1 AND generation=$4 AND status NOT IN ('COMPLETED','DEAD') RETURNING status,dispatch_failures`, [row.id, env.JOB_ATTEMPTS, jobBackoff(row.dispatch_failures + 1), row.generation]);
+        WHERE id=$1 AND generation=$4 AND status NOT IN ('COMPLETED','DEAD') RETURNING status,dispatch_failures`, [row.id, env.JOB_ATTEMPTS, jobBackoff(row.dispatch_failures + 1, row.kind), row.generation]);
       if (marked.rows[0]) {
         const dead = marked.rows[0].status === 'DEAD';
-        logEvent(dead ? 'job.dead' : 'job.dispatch_retry', { jobId: row.id, jobType: row.kind, attempt: row.attempts, failureCount: marked.rows[0].dispatch_failures, retryInMs: dead ? undefined : jobBackoff(row.dispatch_failures + 1), outcome: dead ? 'dead' : 'retry' }, dead ? 'error' : 'warn');
+        logEvent(dead ? 'job.dead' : 'job.dispatch_retry', { jobId: row.id, jobType: row.kind, attempt: row.attempts, failureCount: marked.rows[0].dispatch_failures, retryInMs: dead ? undefined : jobBackoff(row.dispatch_failures + 1, row.kind), outcome: dead ? 'dead' : 'retry' }, dead ? 'error' : 'warn');
       }
     }
   }

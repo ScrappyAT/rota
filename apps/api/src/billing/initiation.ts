@@ -70,7 +70,7 @@ export const initiateBilling = async (pool: Pool, input: InitiationInput): Promi
       await enqueueOutbox(client, {key:'initialize:'+opened.payment.id,kind:'PAYMENT_INITIALIZE',teamId:input.teamId,
         payload:{paymentId:opened.payment.id,teamId:input.teamId,email:input.email,redirectUrl:input.redirectUrl}});
       await enqueueOutbox(client, {key:'reconcile:'+opened.payment.id,kind:'PAYMENT_RECONCILE',teamId:input.teamId,
-        payload:{paymentId:opened.payment.id,teamId:input.teamId,txRef:opened.payment.txRef},availableAt:new Date(now.getTime()+30000)});
+        payload:{paymentId:opened.payment.id,teamId:input.teamId,txRef:opened.payment.txRef},availableAt:new Date(now.getTime()+60000)});
     }
     await client.query('COMMIT');
   }

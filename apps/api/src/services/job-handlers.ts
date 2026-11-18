@@ -1,9 +1,10 @@
 import { handleAuthEmail } from './auth-email';
 import { PoolClient } from 'pg';
 import { UnrecoverableError } from 'bullmq';
+import { HttpError } from '../http-error';
 import { initializeCheckout, verifyTransaction, verifyTransactionByReference, VerifiedTransaction } from '../billing/flutterwave';
 import { materializeSubscription, reconcilePayment } from '../billing/service';
-import { OutboxRow } from './outbox';
+import { OutboxRow, DeferJob } from './outbox';
 import { deliverPush, checkPushReceipts } from './push-delivery';
 import { notify } from './notifications';
 import { invalidateActivity, invalidateRoster, invalidateShifts } from './cache';
@@ -14,7 +15,7 @@ export const paymentResponseReady = async (client: PoolClient, paymentId: string
 };
 const settleVerified = async (client: PoolClient, teamId: string, txRef: string, gateway: VerifiedTransaction, now: Date) => {
   if (!['successful', 'failed', 'cancelled'].includes(gateway.status.toLowerCase()))
-    throw new Error('Provider payment is not terminal yet');
+    throw new HttpError(409, 'PAYMENT_NOT_TERMINAL', 'Provider payment is not terminal yet: ' + gateway.status);
   await client.query('BEGIN');
   try {
     const result = await reconcilePayment(client, teamId, txRef, gateway, now);
@@ -43,10 +44,10 @@ export const handleOutbox = async (client: PoolClient, job: OutboxRow, now: Date
     if (!payment || payment.status !== 'PENDING' || payment.initialization_state === 'READY')
       return null;
     if (payment.initialization_state !== 'QUEUED') {
-      await client.query("UPDATE payment_transactions SET initialization_state='AMBIGUOUS' WHERE id=$1 AND status='PENDING' AND initialization_state='CLAIMED'", [payment.id]);
+      await client.query("UPDATE payment_transactions SET initialization_state='AMBIGUOUS',updated_at=NOW() WHERE id=$1 AND status='PENDING' AND initialization_state='CLAIMED'", [payment.id]);
       return null; // A prior claim may have reached the provider. Never POST again.
     }
-    const claim = await client.query("UPDATE payment_transactions SET initialization_state='CLAIMED' WHERE id=$1 AND status='PENDING' AND initialization_state='QUEUED' RETURNING id", [payment.id]);
+    const claim = await client.query("UPDATE payment_transactions SET initialization_state='CLAIMED',updated_at=NOW() WHERE id=$1 AND status='PENDING' AND initialization_state='QUEUED' RETURNING id", [payment.id]);
     if (!claim.rows.length)
       return null;
     let link: string;
@@ -54,13 +55,13 @@ export const handleOutbox = async (client: PoolClient, job: OutboxRow, now: Date
       link = (await initializeCheckout({ txRef: payment.tx_ref, amountMinor: payment.amount_minor, currency: payment.currency, customer: { email: String(data.email) }, redirectUrl: String(data.redirectUrl) })).link;
     }
     catch {
-      await client.query("UPDATE payment_transactions SET initialization_state='AMBIGUOUS' WHERE id=$1 AND status='PENDING' AND initialization_state='CLAIMED'", [payment.id]);
+      await client.query("UPDATE payment_transactions SET initialization_state='AMBIGUOUS',updated_at=NOW() WHERE id=$1 AND status='PENDING' AND initialization_state='CLAIMED'", [payment.id]);
       return { initialization: 'AMBIGUOUS' }; // The separately committed reconcile job will only GET this reference.
     }
     await client.query('BEGIN');
     try {
       // A webhook may already have settled it while checkout was initializing.
-      const ready = await client.query("UPDATE payment_transactions SET initialization_state='READY',checkout_url=$2 WHERE id=$1 AND status='PENDING' AND initialization_state='CLAIMED' RETURNING id", [payment.id, link]);
+      const ready = await client.query("UPDATE payment_transactions SET initialization_state='READY',checkout_url=$2,updated_at=NOW() WHERE id=$1 AND status='PENDING' AND initialization_state='CLAIMED' RETURNING id", [payment.id, link]);
       if (ready.rows.length)
         await paymentResponseReady(client, payment.id, link);
       await client.query('COMMIT');
@@ -75,6 +76,48 @@ export const handleOutbox = async (client: PoolClient, job: OutboxRow, now: Date
     const payment = (await client.query('SELECT * FROM payment_transactions WHERE id=$1', [data.paymentId])).rows[0];
     if (!payment || payment.status !== 'PENDING')
       return null;
+
+    if (payment.initialization_state === 'QUEUED') {
+      const initJob = (await client.query(
+        "SELECT status FROM job_outbox WHERE event_key = 'initialize:' || $1",
+        [payment.id]
+      )).rows[0];
+
+      const queueAgeMs = now.getTime() - new Date(payment.created_at).getTime();
+
+      // If initialization job is dead or payment remained QUEUED for >5m without a claim:
+      // transition to MANUAL_REVIEW without querying the provider. Never initiate duplicate payment.
+      if (initJob?.status === 'DEAD' || queueAgeMs >= 300000) {
+        await client.query(
+          "UPDATE payment_transactions SET initialization_state='MANUAL_REVIEW',updated_at=NOW() WHERE id=$1 AND status='PENDING' AND initialization_state='QUEUED'",
+          [payment.id]
+        );
+        return { outcome: 'STUCK_QUEUED_MANUAL_REVIEW' };
+      }
+
+      // Initialization is still pending in queue; defer reconciliation
+      throw new DeferJob(new Date(now.getTime() + 15000));
+    }
+
+    if (payment.initialization_state === 'CLAIMED') {
+      const claimTimestamp = payment.updated_at ? new Date(payment.updated_at) : new Date(payment.created_at);
+      const claimAgeMs = now.getTime() - claimTimestamp.getTime();
+
+      if (claimAgeMs < 60000) {
+        // Active in-flight initialization claim (within 60s); defer reconciliation
+        throw new DeferJob(new Date(now.getTime() + 15000));
+      }
+
+      // Claim is genuinely abandoned (>60s past 15s fetch timeout):
+      // Mark AMBIGUOUS before checking provider to prevent competing calls.
+      const marked = await client.query(
+        "UPDATE payment_transactions SET initialization_state='AMBIGUOUS',updated_at=NOW() WHERE id=$1 AND status='PENDING' AND initialization_state='CLAIMED' RETURNING id",
+        [payment.id]
+      );
+      if (!marked.rows.length)
+        return null;
+    }
+
     const gateway = await verifyTransactionByReference(payment.tx_ref);
     return settleVerified(client, payment.team_id, payment.tx_ref, gateway, now);
   }
