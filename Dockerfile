@@ -54,6 +54,16 @@ RUN npm run build -w @rota/api \
 # ---------------------------------------------------------------------------
 FROM node:24-bookworm-slim AS runtime
 
+# Install PostgreSQL 18 client tools for logical backup capabilities
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends curl ca-certificates gnupg \
+  && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /etc/apt/trusted.gpg.d/postgresql.gpg \
+  && echo 'deb http://apt.postgresql.org/pub/repos/apt bookworm-pgdg main' > /etc/apt/sources.list.d/pgdg.list \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends postgresql-client-18 \
+  && apt-get purge -y --auto-remove curl gnupg \
+  && rm -rf /var/lib/apt/lists/*
+
 ENV NODE_ENV=production
 ENV PORT=8080
 
@@ -85,6 +95,5 @@ EXPOSE 8080
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||8080)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-# Run migrations once as an explicitly approved release job before API/workers.
-# Never apply schema changes automatically on API restart or horizontal scale-out.
-CMD ["node", "apps/api/dist/index.js"]
+# Combined API + background worker supervisor for single-container Railway deployment.
+CMD ["node", "apps/api/dist/combined-server.js"]
