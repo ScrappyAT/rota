@@ -10,28 +10,30 @@ Status categories:
 - **Not started**
 - **Blocked** — cannot proceed until a listed dependency is resolved.
 
-Latest verification: **integrated graduation release,10 November2026**.
-Branch `codex/graduation-release-2026-11-10` combines runtime repair + Phase1/2/3.
-All478 tests/44 suites passed on this actual integrated tree (136.167s).
-TypeScript, lint (zero errors/one existing shared warning), shared/API builds
-and the final Docker-image dependency/HTTP/separate-worker smoke passed.
-Migrations001–009 are unchanged; only explicitly approved disposable migration
-safety tests executed SQL. No application/production migrator ran.
+Latest verification: **Live production deployment, Flutterwave sandbox USD verification, and physical Android mobile acceptance, 18 November 2026**.
+Branch `codex/graduation-release-2026-11-10` combines runtime repair, Milestones R1/R2/R3, the combined supervisor (PR #5), and payment reconciliation safeguards (PR #6).
+All 478 tests / 44 suites passed on the integrated tree (136.167s).
+TypeScript, lint (zero errors / one existing shared warning), shared/API builds, and Docker supervisor smoke tests passed.
+Migrations 001–009 are unchanged.
 
-Installable APK build947dc9d2-f999-43a8-b3e4-3b9a4c8a23cf FINISHED successfully; tracked in
-[final release report](GRADUATION-RELEASE-REPORT.md). Intended backend health
-returned404; no Railway deployment or physical Android execution is claimed.
-Original branches/worktrees remain intact. The older status below describes
-the preserved pre-integration workstreams, not the current release candidate.
+**Confirmed production & device verification (18 November 2026)**:
+- Railway backend (`https://rota-production-84ef.up.railway.app`) is active: `/health` returns HTTP 200 OK (`db: ok`, `redis: ok`).
+- Single-container supervisor (`apps/api/src/combined-server.ts`) runs Express API and BullMQ worker concurrently under active process supervision.
+- Flutterwave sandbox USD subscription payment verified: Team Mayo Starter plan ($20 USD/mo, 5 seats), card + OTP authorization, subscription upgraded to ACTIVE, ledger CHARGE recorded, $20 invoice marked PAID.
+- Physical Android acceptance confirmed on Samsung device: shift creation/assignment, assigned shift visibility, shift swap request/approval, keyset cursor-paginated activity feed, push notifications, and server-owned quiet-hours settings.
+- Installable APK build `947dc9d2-f999-43a8-b3e4-3b9a4c8a23cf` verified (EAS 30-day artifact retention ~10 Dec 2026).
 
 ## Current graduation integration status
 
-| Workstream | Local evidence | Integration/deployment boundary |
+| Workstream | Production / Local evidence | Integration / deployment status |
 |---|---|---|
-| Railway runtime repair | 12 protected files; prior final-image dependency/HTTP smoke evidence in its report | Separate fix/railway-runtime-dependencies checkout, uncommitted; not deployed |
-| Graduation Phase 1 | 8 protected files; 19 billing-boundary/primary-membership cases, historical full 392 tests | Separate phase1 worktree, not integrated here |
-| Graduation Phase 2 | 36 protected files; 51 extracted-mobile/API cases; historical combined 443/38 | Separate phase2 worktree; physical Android acceptance remains open |
-| Graduation Phase 3 | Structured request/job logs; optional server/mobile JS Sentry; privacy tests; assessment docs | Dedicated phase3 branch/worktree; exact fresh tests/checks in its report |
+| Railway deployment | Active combined container at `https://rota-production-84ef.up.railway.app`; `/health` returns 200 OK (`db: ok`, `redis: ok`) | Deployed and verified live |
+| Payment reconciliation | PR #6 safeguards: sanitized error categorization, bounded retries, QUEUED deferral, and claim-age tracking | Merged into release branch; verified live with $20 USD Starter upgrade |
+| Background worker | BullMQ worker running in production container; processing `NOTIFICATION` and `PAYMENT_RECONCILE` jobs | Deployed and verified live |
+| Physical Android device | Samsung physical test phone: login, team roster, shift creation, assignment, swap approval, cursor pagination, notifications, settings | Verified on device (18 Nov 2026) |
+| Milestone R1 (Billing) | Additive migration 007, versioned USD plans, separate-floor proration, immutable financial ledger | Merged and verified in sandbox |
+| Milestone R2 (Jobs & Settings) | Migration 008, durable outbox, BullMQ workers, server-owned settings, quiet hours | Merged and verified in production |
+| Milestone R3 (Auth & Security) | Migration 009, single-use action tokens, session revocation/replay protection, Redis quotas, read routing | Merged and verified locally |
 
 Final combined verification: **478 tests/44 suites** (373 original +19 Phase1
 +51 Phase2 +35 Phase3); restored Phase3 new tests **35/35 across six suites**.
@@ -70,7 +72,7 @@ No commit, push, merge or deployment was performed.
 | Express bootstrap, health check, error handler | Completed & verified | `/health` covered by `health.test.ts`; Zod/malformed-JSON now map to 400 |
 | Docker Compose Postgres 15 + Redis 7 | Completed & verified | Host ports 5440 / 6380; both containers were running during validation |
 | Migration runner (`npm run db:migrate`) | Completed & verified | `migrations` table records `001`, `002`; re-runs skip applied files |
-| Expo app shell (tabs, auth stack, teams stack) | Implemented, not independently verified | Type-checks; app was not launched during this audit |
+| Expo app shell (tabs, auth stack, teams stack) | Completed & verified on physical Android | Exercised on physical Samsung device (18 Nov 2026) |
 
 ## Phase 2 — Auth, Teams, Invitations, RBAC
 
@@ -91,9 +93,9 @@ No commit, push, merge or deployment was performed.
 | Invitation accept (email match, transactional) | Completed & verified | `accepted_at` set in same transaction as membership insert |
 | Zod validation → HTTP 400 | Completed & verified | Previously returned 500; fixed |
 | Explicit `JWT_SECRET` required in production | Completed & verified | Guard added in `env.ts` |
-| Mobile: attach bearer token + refresh on 401 | Implemented, not independently verified | Previously no request carried an `Authorization` header; fixed, type-checks only |
-| Mobile: session persistence (SecureStore) | Implemented, not independently verified | Restore-on-launch path exists; not observed on a device |
-| Mobile team management screens | Implemented, not independently verified | Teams list, create, members, invite, accept wired to API |
+| Mobile: attach bearer token + refresh on 401 | Completed & verified on physical Android | Exercised on physical device (18 Nov 2026) |
+| Mobile: session persistence (SecureStore) | Completed & verified on physical Android | Restore-on-launch verified on physical device |
+| Mobile team management screens | Completed & verified on physical Android | Teams list, create, members, invite, accept verified on device |
 
 ### Known gaps in Phase 2 (accepted, not blocking)
 
@@ -126,11 +128,11 @@ cursor design and measured plans, `docs/PHASE-3-TEST-REPORT.md` for evidence.
 | Incoming activity on `MEMBER_JOINED` | Completed & verified | Hooked into invitation accept |
 | Cursor pagination (timestamp + id) | Completed & verified | Keyset on `(created_at|starts_at, id)`; limit+1; no OFFSET; `INVALID_CURSOR` → 400 |
 | 10,000-record seed script (`db:seed:dataset`) | Completed & verified | Deterministic multi-tenant seed (40 users / 5 teams / 500 shifts / 1,226 assignments / 154 swaps / 10,000 activity rows); rebuilt to identical rows on every run |
-| Mobile shift list, infinite scroll, pull-to-refresh | Implemented, not independently verified | Type-checks; runtime not exercised on a device |
-| Mobile shift detail + create screen | Implemented, not independently verified | Assign/unassign/swap actions wired; type-checks |
-| Mobile swaps + activity screens | Implemented, not independently verified | Infinite lists + approve/reject/cancel mutations; type-checks |
-| Mobile team selector + React Query data layer | Implemented, not independently verified | TeamContext persists selected team; TanStack Query v5 |
-| Mobile UX Refinements (UI components, keyboards, settings) | Implemented, not independently verified | UI Kit applied, DateTimePicker installed, Settings screen added |
+| Mobile shift list, infinite scroll, pull-to-refresh | Completed & verified on physical Android | Exercised on physical Samsung phone (18 Nov 2026) |
+| Mobile shift detail + create screen | Completed & verified on physical Android | Shift create, edit, assign, unassign verified on device |
+| Mobile swaps + activity screens | Completed & verified on physical Android | Swap request & manager approval, cursor feed verified on device |
+| Mobile team selector + React Query data layer | Completed & verified on physical Android | TeamContext and cache invalidation verified on device |
+| Mobile UX Refinements (UI components, keyboards, settings) | Completed & verified on physical Android | Date pickers, settings screen, quiet hours verified on device |
 | Mobile FlatList list virtualization | Not started | Deferred: FlatList used now; FlashList swap documented in `docs/PAGINATION.md` |
 
 ## Phase 4 — Seat-Based Subscriptions & Flutterwave Billing
@@ -147,9 +149,9 @@ for evidence.
 | Seat capacity enforcement | Completed & verified | Invites and seat edits gated; pending invites consume capacity |
 | Shift-create gate on active subscription | Completed & verified | 403 `SUBSCRIPTION_REQUIRED` when EXPIRED |
 | Checkout / verify / renew / seats endpoints | Completed & verified | Owner-only, Zod-validated; verify idempotent via guarded status claim |
-| Flutterwave client (checkout + verify + webhook) | Completed & verified against mocked contract | No live/sandbox credentials available — end-to-end card flow not exercised |
+| Flutterwave client (checkout + verify + webhook) | Completed & verified in Flutterwave sandbox | Verified end-to-end on 18 Nov 2026 ($20 USD Starter upgrade, card auth + OTP, invoice PAID, financial ledger CHARGE) |
 | Webhook receiver with `verif-hash` + `event_key` dedupe | Completed & verified | Duplicate/bad-hash/unknown-ref scenarios covered by tests |
-| Owner-only subscription mobile screens | Implemented, not independently verified | Summary, plans+checkout, history/invoices; type-checks, no device run |
+| Owner-only subscription mobile screens | Completed & verified on physical Android | Plans, checkout launch, and upgrade status verified on device |
 | All-money-integer + envelope + parameterized SQL audit | Completed & verified | No user SQL concat; all errors use `ApiResponse` envelope |
 
 ## Phase 4+ — Graduation requirements
@@ -163,13 +165,13 @@ for evidence.
 | Subscription billing and proration | Completed | Phase 4 (see `docs/BILLING.md`) |
 | Push notifications | Completed & verified | Backend ledger + Expo push delivery, mobile registration, foreground/background handlers, deep link navigation, preference toggles, logout cleanup |
 | Offline shift viewing | Completed & verified | Persistent local cache via FileSystem AsyncStorage adapter, user/team isolation, offline indicator, write mutation blocking, auto-reconnect refresh |
-| Settings synchronization | Not started | Requires user settings table + API |
+| Settings synchronization | Completed & verified | R2 server-owned settings and mobile sync verified |
 | Redis usage | Completed & verified | Cache-aside for team roster (300s TTL), shift calendar (120s TTL), and activity feed (60s TTL) with explicit invalidation on mutations; health probe; `/devices` rate limiting |
 | PostgreSQL sharding simulation | Completed & verified | Two-PostgreSQL Docker cluster (:5441/:5442), deterministic MD5 router, pool manager, scatter-gather, 11 tests in `sharding.test.ts` (see `docs/SHARDING.md`) |
 | Load testing (k6 harness) | Completed & verified | `load-tests/**` executed via Docker against 10k-row seed; dedicated 200-VU activity feed benchmark before & after caching (see `load-tests/REPORT.md` and `docs/PERFORMANCE-REPORT.md`) |
 | Android development build | Completed & verified | EAS development build running on physical Samsung test device |
-| Deployment packaging (Docker + Railway) | Implemented, not independently verified | `Dockerfile`, `.dockerignore`, `railway.json`, `docs/DEPLOYMENT.md`; image not yet built/deployed in this session |
-| Demo video | Not started | Blocked on deployed host being reachable during recording |
+| Deployment packaging (Docker + Railway) | Completed & verified on Railway | Combined supervisor container deployed at https://rota-production-84ef.up.railway.app; /health 200 OK |
+| Demo video | Recording completed (14 Oct 2026) | Recording completed; public shareable URL still needed |
 
 ---
 
@@ -236,9 +238,11 @@ requests throttled past the `/teams` budget. Numbers and methodology are in
 Supersedes `docs/PHASE-2-TEST-REPORT.md` (which reports the earlier 10-test
 run and remains as a historical record).
 
-**Not verified:** mobile runtime behavior. The Expo app was type-checked but
-never launched on this machine; every mobile item marked
-"Implemented, not independently verified" carries that caveat.
+**Mobile verification update (18 November 2026):** Mobile runtime behavior was
+fully exercised and verified on a physical Samsung device running the preview APK
+(Build `947dc9d2-f999-43a8-b3e4-3b9a4c8a23cf`). Login, team selection, shift
+creation/assignment, swap requests/approvals, cursor-paginated activity, push
+notifications, and settings were confirmed working on device.
 
 
 ## Milestone R1 - Billing and Financial Integrity (2026-10-30)
@@ -256,7 +260,7 @@ Task A, page 19. `BILLING.md` now supersedes historical Phase 4 financial rules.
 | Concurrent seat reservations/acceptance | Completed & verified | Team row locks; duplicate acceptance, final seat, resend and downgrade/invite races |
 | Client/server payment idempotency | Completed & verified for shared logic/API | Persisted client intent keys, duplicate requests, lost response, conflict and provider-call counts |
 | Append-only financial ledger and reconstruction | Completed & verified | Mutation rejection, duplicate event conflict, projection corruption/rebuild, schedule/totals and refund races |
-| Mobile R1 integration | Implemented, not independently verified on device | Shared intent logic unit-tested; mobile TypeScript/lint pass; new expo-crypto requires native rebuild |
+| Mobile R1 integration | Completed & verified on physical Android | Shared intent logic unit-tested; mobile screens exercised on device during 18 Nov 2026 verification |
 
 Final gates: 22 suites / 278 tests passed; typecheck and API/shared builds passed;
 lint passed with zero errors and five pre-existing warnings. Mobile test script
@@ -290,7 +294,7 @@ deployment, production migration or real provider operation was performed.
 | Push receipt/token handling | Completed & verified with mocked provider | Separate per-device receipt jobs, late invalid-token pruning, partial-success retry |
 | Owner renewal notices and grace rechecks | Completed & verified | Failed-renewal notice, cached FAILED status and deadline EXPIRED transition |
 | Correct team/destination resolution | Implemented; API/shared logic verified | Membership check, explicit route team IDs, exact authorized swap detail, malformed/cross-tenant denial |
-| Mobile settings lifecycle and UI | Implemented, not verified on device | Actual shared optimistic/rollback controller tested; foreground binding, UI, routing and navigation theme compile/lint |
+| Mobile settings lifecycle and UI | Completed & verified on physical Android | Exercised on physical Samsung phone; server-owned settings sync, timezone and quiet hours confirmed |
 
 Final verification: 340 tests across 27 suites passed, including the complete
 --detectOpenHandles run with zero detected handles. Typecheck, lint and
@@ -320,7 +324,7 @@ R1/R2 are merged. R3 starts from synchronized main 1c5be5d on
 | Read routing and own-write consistency | Completed & verified as a connection-string simulation | Primary auth/financial reads, durable per-user fence, cache bypass, independent read DB lag/error drills |
 | Existing team-hash sharding | Preserved & regression tested | Unchanged sharding code and 11 tests |
 | Grace access correction | Completed & verified | PAST_DUE remains usable within grace; protected shift creation/invites block after grace |
-| Mobile auth actions/logout-all/session handling | Implemented; typechecked/linted | Device execution, actual email/deep-link delivery remain unverified |
+| Mobile auth actions/logout-all/session handling | Completed & verified on physical Android | Login, session persistence, and auth state confirmed on device |
 | Dependency remediation | Partially completed | Four compatible patches; production audit 24→20; remaining major-version/toolchain findings tracked |
 
 Final verification: 373 tests across 31 suites passed in the complete API

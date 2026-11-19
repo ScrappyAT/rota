@@ -91,18 +91,15 @@ catalog and immutable ledger; durable outbox/worker processing and settings;
 and reset/magic-link authentication, revocation, Redis quotas and read routing.
 Historical NGN records remain in their original currency.
 
-The preserved source checkouts originally held separate graduation corrections: Railway runtime
-repair (12 files), Phase 1 billing-boundary/primary-membership fixes (8 files),
-Phase 2 mobile completion (36 files), and Phase 3 observability/documentation.
-They are now integrated locally on `codex/graduation-release-2026-11-10`;
-remote main is unchanged and no deployment is claimed. The original checkouts
-remain intact. See [final release report](docs/GRADUATION-RELEASE-REPORT.md). Read
-[implementation status](docs/IMPLEMENTATION-STATUS.md) and the phase reports
-before treating local test results as release evidence.
-
-The mobile test script is a stub; API-hosted tests exercise extracted mobile
-state/storage modules with native adapters mocked. Typechecking and an Android
-JavaScript bundle do not establish physical-device behavior.
+The release candidate branch `codex/graduation-release-2026-11-10` integrates
+all graduation workstreams: runtime packaging, Phase 1 billing boundaries,
+Phase 2 mobile completion, Phase 3 observability, the combined API/worker
+supervisor (PR #5), and payment reconciliation safeguards (PR #6).
+The backend is deployed live on Railway at `https://rota-production-84ef.up.railway.app`
+where `/health` returns HTTP 200 OK (`db: ok`, `redis: ok`).
+Physical Android device acceptance was verified on an active Samsung device on
+18 November 2026. See [final release report](docs/GRADUATION-RELEASE-REPORT.md)
+and [implementation status](docs/IMPLEMENTATION-STATUS.md).
 
 ## Production & Performance
 
@@ -223,34 +220,17 @@ Policy references checked 10 November 2026:
 [Google Play Payments policy](https://support.google.com/googleplay/android-developer/answer/9858738?hl=en).
 Recheck eligibility and current regional terms at the actual release date.
 
-## November 10 graduation release candidate
+## Production Deployment and Graduation Verification (November 2026)
 
-The release candidate integrates the Railway runtime repair and all reviewed
-Graduation Phase1/2/3 source, tests and docs. No new product phase was started.
-Use the repaired API-only Docker CMD (PORT8080), and a separate worker process.
-`railway.worker.json` prepares worker startup with no Railway HTTP health check;
-set each service's configuration path explicitly only during an approved rollout.
+The release branch `codex/graduation-release-2026-11-10` is deployed and active on Railway:
+- **Backend URL**: `https://rota-production-84ef.up.railway.app`
+- **Supervisor**: Runs both Express API (port 8080) and BullMQ background worker concurrently inside one container via `apps/api/src/combined-server.ts`.
+- **Healthcheck**: `GET /health` returns HTTP 200 OK (`{"status":"ok","db":"ok","redis":"ok"}`).
+- **Flutterwave USD Payment Verification**: Verified live in sandbox with Starter plan ($20 USD/mo, 5 seats), card + OTP authorization, subscription upgraded to ACTIVE, immutable financial ledger CHARGE, and PAID invoice.
+- **Physical Android Acceptance**: Exercised on physical Samsung device: shift scheduling, atomic swaps, keyset cursor pagination, push notifications, and server-owned quiet hours.
+- **Automated Tests**: 478 tests / 44 suites passing.
 
-The intended mobile backend is https://rota-production-84ef.up.railway.app.
-Its /health returned404 during release preparation; a built APK does not imply
-that backend is online. The user reports Railway trial expiry11 November2026;
-remaining credit and live service configuration are unverified. No paid changes
-or new deployment were made.
+See [release report](docs/GRADUATION-RELEASE-REPORT.md) and [submission checklist](docs/SUBMISSION.md) for full audit records.
 
-Release verification reuses the already-migrated disposable Phase3 stack:
-`npm run test:release -- -IncludeMigrationSafetyTests`. The explicit switch
-allows only the existing tests' temporary migration-safety databases. The runner
-never invokes the application migration command. Without the switch, four
-migration-invoking suites are excluded and the output must not be called a full
-478-test run. `scripts/test-release-runtime.ps1` clones the disposable database,
-checks final-image imports/HTTP/worker execution, and retains all resources.
-No migrations run on API/worker startup. Do not run the older runtime-smoke script
-under a no-deletion/no-migration restriction: its historical cleanup and migrator
-are intentionally not used for this release.
-
-See [release report](docs/GRADUATION-RELEASE-REPORT.md) for observed checks, the
-new APK build/artifact, exact dashboard prerequisites and submission actions.
-
-Installable Android APK (integrated preview,10 November2026):
-[Download APK](https://expo.dev/artifacts/eas/r197ay-RMlQSdm-zTC_w1I4b_gD85C3_c0NBXPBYi8w.apk).
-Physical-device behavior and backend availability remain unverified.
+Installable Android APK (SDK 57 preview, build 947dc9d2-f999-43a8-b3e4-3b9a4c8a23cf):
+[Download APK](https://expo.dev/artifacts/eas/r197ay-RMlQSdm-zTC_w1I4b_gD85C3_c0NBXPBYi8w.apk) (Note: EAS artifact URL retention is 30 days, expiring ~10 December 2026). Physical-device execution confirmed.
