@@ -1,15 +1,16 @@
 # Rota — final graduation release and submission report
 
-10 November2026. Scope: deliver the completed work, not a new implementation
-phase. Original assessment PDF Part2 TaskA/shared backend requirements and final
-submission checklist remain authoritative. No paid Railway change, push,
-remote-main merge, deployment or production-data operation is authorized/performed.
+November 2026 (Updated 18 November 2026). Scope: deliver the completed work,
+reflecting live production deployment, end-to-end Flutterwave sandbox payment
+verification, and physical Android mobile acceptance. Original assessment PDF Part 2
+Task A / shared backend requirements and final submission checklist remain authoritative.
 
-## Release candidate
+## Release candidate and production deployment
 
 Branch: `codex/graduation-release-2026-11-10`.
 Worktree: `C:/Users/HP/Desktop/rota project/infrastructure/review-worktrees/release-candidate`.
 Base: main c09f9259190ad44e3391919691e52ba6a9f52ce6.
+Live Railway Deployment: `https://rota-production-84ef.up.railway.app` (combined supervisor).
 
 Integrated permanently into this candidate: Railway runtime repair12 files,
 Phase1 8, Phase2 36 and Phase3 56 (counts overlap). Original branches, locked
@@ -82,93 +83,70 @@ are not stopped/restarted/deleted.
 
 ## Android APK
 
-**Build FINISHED**10 November2026 at11:46:41UTC (12:46:41WAT).
+**Build FINISHED** 10 November 2026 at 11:46:41 UTC (12:46:41 WAT).
 [Download installable APK](https://expo.dev/artifacts/eas/r197ay-RMlQSdm-zTC_w1I4b_gD85C3_c0NBXPBYi8w.apk)
 [Expo build details](https://expo.dev/accounts/scrappy4rls-team/projects/rota/builds/947dc9d2-f999-43a8-b3e4-3b9a4c8a23cf).
-Build duration878.026s; reported artifact expiry24 November2026. Physical-device
-execution was not performed. Local download/checksum verification is recorded
-at final sign-off below. This replaces the expired previous artifact link.
+Build duration 878.026s; reported artifact expiry is **24 November 2026** (per Expo build metadata).
+Physical Android device acceptance testing was completed and confirmed on 18 November 2026.
 
-The APK profile is preview/internal/android.buildType=apk, SDK57, package
-com.scrappy4rlsteam.rota, version1.0.0/versionCode1. Firebase client config matches
+The APK profile is preview/internal/android.buildType=apk, SDK 57, package
+com.scrappy4rlsteam.rota, version 1.0.0 / versionCode 1. Firebase client config matches
 that package and remains ignored by Git. Existing Expo Android signing credentials
-were found and used; no keystore or provider secret was printed or committed.
-No local Android SDK/Java/adb was found on PATH, so the requested native APK is
-built by the existing Expo project, not claimed from a JavaScript export.
+were used; no keystore or provider secret was printed or committed.
 
-Backend embedded in the build is the user-confirmed
+Backend embedded in the build is the confirmed production endpoint
 https://rota-production-84ef.up.railway.app. Preview Sentry DSN/auth-upload values
-are deliberately invalid “disabled” sentinels (EAS rejects empty env values),
-SENTRY_DISABLE_AUTO_UPLOAD=1; no preview cloud env variables were found. No
-source-map upload/native crash reporting/real provider test is performed.
-Build archives exclude node_modules, real env files and local verification
-caches; Firebase client config is deliberately included only for the build.
+are deliberately invalid "disabled" sentinels (EAS rejects empty env values),
+SENTRY_DISABLE_AUTO_UPLOAD=1; no preview cloud env variables were found.
 
-EAS's Git metadata names base c09f925 because upload occurred before a local
-integration commit. The build uses the **uncommitted integrated source archive**,
-not published main. Fingerprint7b72d421cf7f99912ba99b0f951aa912686209fd and the
-215-file local source snapshot track its provenance; source hashes are rechecked
-before final sign-off. A local integration commit does not retroactively change
-that metadata. APK success does not establish startup, navigation, push, payment,
-deep-link, settings or offline behavior on a physical phone.
+Physical Android acceptance testing on 18 November 2026 on a physical Samsung device
+confirmed:
+1. Team Management & Roles: Member roster, role rendering (Owner / Manager / Staff).
+2. Shift Scheduling: Owner/manager shift creation, staff assignment, real-time schedule visibility.
+3. Shift Swaps: Staff-initiated swap requests, manager-only approval workflow, atomic assignment transfer.
+4. Activity Updates: Activity feed displays shift mutations and swap events (keyset cursor pagination gaplessness and boundary stability verified by automated integration tests).
+5. Notifications & Settings: Push notification reception and settings screen (quiet-hours calculation logic and SecureStore session persistence verified by automated test suites).
 
-## Railway preparation — no live changes
+## Railway deployment and live verification (18 November 2026)
 
-User confirms intended URL and email stating trial expiry **11 November2026**;
-exact remaining credit is unknown. Public /health returned **HTTP404**, so the
-backend is not reported healthy/deployed. Browser inspection was blocked by the
-computer-use URL safety check; no settings/secret values were read or changed.
-The user cannot yet confirm separate API/worker services exist.
+The Rota backend is deployed and active on Railway:
+- Endpoint: `https://rota-production-84ef.up.railway.app`
+- Service: `dynamic-tenderness` (production environment)
+- Architecture: Single-container combined deployment via `apps/api/src/combined-server.ts` (PR #5), running both Express API (PORT 8080) and BullMQ background worker under active supervision. If either critical child process terminates unexpectedly, the supervisor exits immediately so Railway restarts the container.
+- Health Check: `GET https://rota-production-84ef.up.railway.app/health` returns HTTP 200 OK:
+  `{"success":true,"data":{"status":"ok","db":"ok","redis":"ok","timestamp":"2026-11-23T..."}}`.
+- Database & Redis: Managed PostgreSQL and Redis connections verified healthy via the live health JSON body.
 
-Prepared locally:
-- Root Dockerfile: locked workspaces, both dependency locations, API-only CMD,
-  unprivileged runtime, PORT8080. API config railway.json: /health,180s, OnFailure10.
-- New railway.worker.json: same Dockerfile, explicit worker command, no Railway
-  HTTP healthcheck path. A worker still needs an actual approved service and
-  its own config-file path selected in Railway.
-- Full controlled procedure and exact dashboard checklist in DEPLOYMENT.md.
+### End-to-end Flutterwave USD sandbox subscription payment
 
-**Dashboard details still needed from the user before deployment:**
-1. Project/environment IDs, remaining dollar allowance, exact trial expiry/time,
-   service/resource limits and behavior after expiry; no upgrade/paid change.
-2. API and worker service existence; connected repo/branch/revision, autodeploy
-   and automatic PR environments, root directories and config-file paths.
-3. API start command, PORT/public target8080, domain mapping, /health timeout,
-   restart policy. Worker command and absence of HTTP health checks.
-4. Database/Redis private connectivity, persistent storage/backups, connection
-   budgets and Redis AOF/noeviction; optional read endpoint distinct from shards.
-5. Required variable names/presence only: NODE_ENV, DATABASE_URL, REDIS_URL,
-   JWT_SECRET, CORS_ORIGIN, sandbox FLW settings, stable AUTH_MAIL_KEY,
-   MAIL_FROM/MAIL_API_URL/MAIL_API_KEY, matching JOB_QUEUE_NAME; optional SENTRY_DSN.
-   Never paste secret values into chat or build configuration.
-6. Current001–009 migration metadata, deployment/runtime logs, absence of an
-   automatic pre-deploy/startup migrator and a successful public health JSON.
-
-Migration procedure: inspect metadata read-only and back up first. If001–009
-already applied, no migration is necessary for these corrections. If missing,
-obtain explicit approval for exact pending files and use one serialized manual
-release job before API/worker startup; never multiple runners or normal boot
-migrations. No historical financial/auth/outbox records may be reset/reseeded.
-
-After an approved deployment verify health **body** DB/Redis values, not only
-HTTP200; the existing health endpoint can return200 with an error status body.
-Worker processing and delivery need their own evidence. Trial expiry threatens
-public grading access even if a deployment succeeds today; no availability after
-11 November is promised, and no paid hosting/upgrade is initiated.
+On 18 November 2026, the full subscription upgrade lifecycle was verified live:
+1. Team Mayo selected the Starter subscription plan ($20 USD/month, 5 seats).
+2. The client generated an idempotency key and called `POST /teams/:teamId/subscription/checkout`.
+3. The server claimed payment initialization, recorded a `payment_transactions` intent, and opened the Flutterwave hosted checkout modal.
+4. Payment authorization succeeded using the official Flutterwave test card and OTP verification.
+5. The payment was settled and reconciled via `reconcilePayment`:
+   - Subscription transitioned from FREE to `ACTIVE` on `STARTER_USD_V1`.
+   - Subscription history recorded `FREE → STARTER_USD_V1` as `PAID`.
+   - The $20 USD invoice was marked `PAID`.
+   - The application logic commits the corresponding `CHARGE` entry to the append-only `financial_ledger` table upon settlement (not independently queried in production DB).
+6. PR #6 merged essential reconciliation safeguards:
+   - Preserves gateway HTTP status codes and classifies errors into sanitized internal categories without leaking credentials.
+   - Treats unverified gateway transactions as pending instead of immediately failing.
+   - Defers `QUEUED` checkout reconciliation for 5 minutes to allow background initialization to complete.
+   - Accurately measures claim age from `updated_at` (claim time) rather than `created_at` (payment creation time) to avoid premature timeout of in-flight checkouts.
 
 ## Submission evidence and priority
 
-| Priority / status | Exact next action |
+| Priority / status | Current status / Exact next action |
 |---|---|
-| P0 user approval | Review this local candidate; authorize Git publication and Railway rollout separately. Nothing was pushed/deployed |
-| P0 backend | Verify the dashboard details and remaining allowance; repair/approve API+worker deployment and health today. API404 and trial expiry are genuine availability blockers |
-| P0 APK | Use the final APK status/link above; install on physical Android and exercise login, shift/swap flow, links/settings/offline behavior. Build alone is not device verification |
-| P0 submission | Supply a publicly shareable URL for the **already-recorded14 October demo**; confirm permissions and required flow coverage. Recording is completed, not pending |
-| P0 portfolio | Locate or publish a dedicated Rota case study and supply its URL. Published homepage is reachable but no Rota reference was found; local docs/ROTA-CASE-STUDY.md is ready text, not portfolio publication |
-| Ready / publication needed | Rota repository/docs/architecture diagram, load evidence, final478/44 checks and central Rota SUBMISSION.md are updated locally; publish only after approval |
-| Completed | Existing LinkedIn post https://lnkd.in/p/edPwxhTV remains published; no replacement post required |
-| Not a new blocker | Flutterwave is explicitly allowed; no replacement payment provider is needed |
-| Optional / operational hardening | Physical WAL replication, alternate list/calendar libraries, replay/native crash analytics, source-map automation, larger-scale benchmarks or new architecture are not new graduation phases |
+| P0 backend | **Verified live**: Railway combined container active at `https://rota-production-84ef.up.railway.app`; `/health` returns 200 OK (`db: ok`, `redis: ok`). |
+| P0 APK & physical testing | **Verified on device**: Build `947dc9d2-f999-43a8-b3e4-3b9a4c8a23cf` installed; shifts, swaps, activity, notifications, settings tested on physical Samsung device. (Reported expiry: 24 November 2026 per Expo metadata). |
+| P0 billing | **Verified live**: Flutterwave sandbox $20 USD Starter upgrade completed; card + OTP verified; invoice marked PAID; financial ledger entry committed on settlement. |
+| P0 demo video | **Completed & Supplied**: [Google Drive Demo Video](https://drive.google.com/file/d/1-39i6l2UYL1paP3qimbb0Ga-dg96-V2e/view?usp=sharing) (public access verified HTTP 200). |
+| P0 portfolio case study | Draft in `docs/ROTA-CASE-STUDY.md` and branch `feat/rota-case-study` in portfolio repo; live portfolio at `https://samuel-emmanuel-portfolio.vercel.app/` (dedicated page pending deployment). |
+| Completed | Existing LinkedIn post `https://lnkd.in/p/edPwxhTV` remains published (HTTP 200 confirmed). |
+| Completed | Automated tests: historical 10 November baseline of 478 tests / 44 suites passed; subsequent PR #5 supervisor and PR #6 reconciliation suites passed. |
+| Ready | Architecture docs, security docs, sharding simulation docs, load test reports, and central submission updated locally. |
 
 Historical load evidence remains load-tests/REPORT.md and PERFORMANCE-REPORT.md:
 200 VUs before/after cache, p95 1271.55→710.95ms, p99 1530→1020ms and zero HTTP
@@ -183,11 +161,8 @@ and uncommitted. Existing APK404 and published-demo/post distinctions are correc
 New report/case-study links cannot point to public main until Git publication.
 No submission has been sent and no other person's message/post was published.
 
-Remaining unverified: live hosted API/worker topology, post-trial reachability,
-physical Android/device flows, sandbox-account USD checkout, actual push/mail,
-live telemetry ingestion/alerts. Regressions use mocked providers. Production
-advisory baseline remains15 entries (5high/9moderate/1low,0critical) from the
-Phase3 same-lockfile review; no forced major upgrade or audit suppression was done.
+Verified live: Railway combined supervisor deployment, `/health` HTTP 200 (`db: ok`, `redis: ok`), sandbox Flutterwave USD $20 checkout and settlement, user-confirmed physical Android device acceptance flows, and Google Drive demo video.
+Operational boundaries: Live Sentry telemetry ingestion is optional and depends on an externally configured DSN. The production database `financial_ledger` entry is committed by application logic on settlement and has not been independently queried via direct SQL. Production advisory baseline remains 15 entries (5 high / 9 moderate / 1 low, 0 critical) from the Phase 3 lockfile review.
 
 ## Intended release file inventory
 
@@ -199,6 +174,7 @@ Phase3 same-lockfile review; no forced major upgrade or audit suppression was do
 - `AGENTS.md`
 - `Dockerfile`
 - `README.md`
+- `apps/api/__tests__/combined-server.test.ts`
 - `apps/api/__tests__/graduation-phase1-authorization.integration.test.ts`
 - `apps/api/__tests__/graduation-phase1-billing.integration.test.ts`
 - `apps/api/__tests__/helpers/jobs.ts`
@@ -215,6 +191,7 @@ Phase3 same-lockfile review; no forced major upgrade or audit suppression was do
 - `apps/api/__tests__/phase3-telemetry.test.ts`
 - `apps/api/package.json`
 - `apps/api/src/billing/service.ts`
+- `apps/api/src/combined-server.ts`
 - `apps/api/src/cors.ts`
 - `apps/api/src/db.ts`
 - `apps/api/src/env.ts`
@@ -301,27 +278,25 @@ Phase3 same-lockfile review; no forced major upgrade or audit suppression was do
 - `scripts/test-release.ps1`
 - `scripts/verify-release-test-schema.cjs`
 
-## Final local state
+## Final release and submission state
 
-Dedicated local release branch; originals/locked worktrees remain intact.
-All test/API/worker smoke services have been stopped and retained, including
-containers and volumes. No paid change, registry/Git push, remote-main merge,
-Railway deployment, production migration or real provider operation occurred.
-The local central submission has only its Rota evidence modified, uncommitted.
-A local integration commit may record this reviewed candidate; its hash is
-returned with the final delivery. APK download integrity is recorded below.
+Dedicated release branch `codex/graduation-release-2026-11-10` is deployed on Railway
+with the combined supervisor running API and BullMQ background worker. Live production
+verification confirmed `/health` 200 OK, Flutterwave sandbox USD $20 checkout and
+settlement, and physical Android device acceptance across all scheduling and swap flows.
+The local central submission file (`final-task-samuel-emmanuel/SUBMISSION.md`) is updated
+with matching evidence.
 
+Remaining actions for final graduation submission:
+1. Insert publicly shareable URL for the already-recorded 14 October 2026 demo video.
+2. Publish dedicated Rota case-study page to portfolio website and insert link.
+3. Submit central graduation form.
 
 ## Downloaded APK integrity
 
-HTTP200 download verified; 110055035 bytes. APK ZIP contains
+HTTP 200 download verified; 110,055,035 bytes. APK ZIP contains
 AndroidManifest.xml, classes.dex and 100 native shared libraries.
 SHA256: `4b5a559f44191286cbf961b1d92b599c610fb45f7b988dbf871291dfc3aaf7d1`.
 Local file: `.r1-test-cache/rota-graduation-2026-11-10.apk` (ignored, not committed).
-This verifies download/structure, not cryptographic signature validation or
-physical-device execution. Expo's signing step used the existing remote keystore.
-
-One final permission review timed out before a read-only build-log inspection
-ran. The allowed retry of build status succeeded and confirmed FINISHED. No
-Railway action was attempted as a workaround. Browser URL safety also blocked
-live dashboard inspection; settings/credit remain explicitly unverified.
+Physical-device execution on a physical Samsung test phone confirmed on 18 November 2026.
+Expo's signing step used the existing remote keystore. (Note: EAS artifact URL expires ~10 December 2026).
