@@ -72,7 +72,7 @@ In shift-based workplaces, scheduling mistakes, missed swaps, and untracked bill
 - **Solution**:
   - **Exact Money Math**: All currency calculations operate in integer minor units (cents) with separate-floor proration calculation.
   - **Idempotency**: All billing endpoints enforce a client UUID `Idempotency-Key`, caching and returning matching responses to prevent double-charging over spotty mobile networks.
-  - **Append-Only Ledger**: Subscriptions utilize an append-only financial ledger (`ledger_entries`). Financial adjustments require new compensating records rather than destructive in-place mutations.
+  - **Append-Only Ledger**: Subscriptions utilize an append-only financial ledger (`financial_ledger`). Financial adjustments require new compensating records rather than destructive in-place mutations.
   - **Reconciliation Safeguards**: In PR #6, Flutterwave verification was hardened with sanitized error categorization, bounded retry backoffs, a 5-minute deferral on still-`QUEUED` checkouts, and precise claim-age measurement via `updated_at` to eliminate race conditions between initialization and reconciliation.
 
 ### 4. Durable Outbox & Single-Container Supervision
@@ -102,22 +102,20 @@ On **18 November 2026**, Rota completed end-to-end production verification acros
    - Combined supervisor runs Express API (port 8080) and BullMQ worker concurrently.
 
 2. **Flutterwave USD Subscription Flow**:
-   - Verified live in sandbox: Team "Mayo" upgraded from FREE to Starter plan ($20 USD/mo, 5 seats).
+   - Verified live in sandbox: Team "Mayo" upgraded from FREE to Starter plan ($20 USD/mo, 5 seats) via `POST /teams/:teamId/subscription/checkout`.
    - Test card authorized and OTP verification completed.
    - Subscription transitioned to `ACTIVE`.
-   - Immutable financial ledger appended `CHARGE` entry for $20 USD.
    - Invoice marked `PAID`.
+   - Application logic commits the corresponding `CHARGE` entry to the append-only `financial_ledger` table upon settlement (not independently queried in production DB).
 
 3. **Physical Android Device Acceptance**:
-   - Verified on a physical Samsung device with installable preview APK (Build `947dc9d2-f999-43a8-b3e4-3b9a4c8a23cf`).
-   - Verified shift creation and assignment.
-   - Verified assigned shift visibility in staff account schedule.
-   - Verified staff shift-swap request and manager-only approval.
-   - Verified cursor-paginated activity history with infinite scroll.
-   - Verified push notification delivery and quiet-hours preference enforcement.
+   - Verified on a physical Samsung device with installable preview APK (Build `947dc9d2-f999-43a8-b3e4-3b9a4c8a23cf`, reported expiry **24 November 2026**).
+   - User-confirmed manual flows: shift creation and assignment, assigned shift visibility in staff account schedule, staff shift-swap request and manager-only approval, activity feed updates, and push notification delivery/settings.
+   - Automated regression test coverage (not claimed as manually observed on device): keyset cursor pagination gaplessness and boundary stability across equal timestamps, quiet-hours suppression calculation logic, and SecureStore session persistence across cold app restarts.
 
 4. **Automated Testing Suite**:
-   - **478 tests across 44 suites** passing in Jest/Supertest.
+   - Historical 10 November 2026 integrated release baseline: **478 tests across 44 suites** passing in Jest/Supertest (136.167s).
+   - Subsequent test suites: added supervisor process tests (`combined-server.test.ts`, 3 tests) and payment reconciliation safeguards (`paymentReconciliation.test.ts`, 14 tests) with zero regressions.
    - 0 TypeScript compiler errors in strict mode.
    - 0 ESLint errors across all workspaces.
 
@@ -126,6 +124,7 @@ On **18 November 2026**, Rota completed end-to-end production verification acros
 ## Architecture Links & Source Artifacts
 
 - **GitHub Repository**: [ScrappyAT/rota](https://github.com/ScrappyAT/rota) (Branch: `codex/graduation-release-2026-11-10`)
+- **Graduation Demo Video**: [Watch on Google Drive](https://drive.google.com/file/d/1-39i6l2UYL1paP3qimbb0Ga-dg96-V2e/view?usp=sharing) (public access verified HTTP 200)
 - **System Architecture**: [docs/ARCHITECTURE.md](ARCHITECTURE.md)
 - **Security & RBAC**: [docs/SECURITY.md](SECURITY.md)
 - **Financial & Money Model**: [docs/BILLING.md](BILLING.md)

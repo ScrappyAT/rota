@@ -226,11 +226,12 @@ The release branch `codex/graduation-release-2026-11-10` is deployed and active 
 - **Backend URL**: `https://rota-production-84ef.up.railway.app`
 - **Supervisor**: Runs both Express API (port 8080) and BullMQ background worker concurrently inside one container via `apps/api/src/combined-server.ts`.
 - **Healthcheck**: `GET /health` returns HTTP 200 OK (`{"status":"ok","db":"ok","redis":"ok"}`).
-- **Flutterwave USD Payment Verification**: Verified live in sandbox with Starter plan ($20 USD/mo, 5 seats), card + OTP authorization, subscription upgraded to ACTIVE, immutable financial ledger CHARGE, and PAID invoice.
-- **Physical Android Acceptance**: Exercised on physical Samsung device: shift scheduling, atomic swaps, keyset cursor pagination, push notifications, and server-owned quiet hours.
-- **Automated Tests**: 478 tests / 44 suites passing.
+- **Flutterwave USD Payment Verification**: Verified live in sandbox with Starter plan ($20 USD/mo, 5 seats) via `POST /teams/:teamId/subscription/checkout`, card + OTP authorization, subscription upgraded to ACTIVE, and PAID invoice. (Application logic commits the corresponding CHARGE entry to `financial_ledger` upon settlement; not independently queried in production DB).
+- **Physical Android Acceptance**: User-confirmed on physical Samsung device: shift scheduling and assignment, assigned shift visibility, staff swap request and manager approval, activity feed updates, and notifications/settings delivery. (Automated tests cover keyset cursor pagination gaplessness, quiet-hours suppression logic, and cold-restart session persistence).
+- **Automated Tests**: Historical November 10 integrated-release baseline of 478 tests / 44 suites passing; subsequent supervisor and reconciliation test suites reported separately.
+- **Demonstration Video**: [Watch on Google Drive](https://drive.google.com/file/d/1-39i6l2UYL1paP3qimbb0Ga-dg96-V2e/view?usp=sharing) (public access verified HTTP 200).
 
 See [release report](docs/GRADUATION-RELEASE-REPORT.md) and [submission checklist](docs/SUBMISSION.md) for full audit records.
 
 Installable Android APK (SDK 57 preview, build 947dc9d2-f999-43a8-b3e4-3b9a4c8a23cf):
-[Download APK](https://expo.dev/artifacts/eas/r197ay-RMlQSdm-zTC_w1I4b_gD85C3_c0NBXPBYi8w.apk) (Note: EAS artifact URL retention is 30 days, expiring ~10 December 2026). Physical-device execution confirmed.
+[Download APK](https://expo.dev/artifacts/eas/r197ay-RMlQSdm-zTC_w1I4b_gD85C3_c0NBXPBYi8w.apk) (Reported artifact expiry **24 November 2026** per Expo build metadata). Physical-device execution confirmed.

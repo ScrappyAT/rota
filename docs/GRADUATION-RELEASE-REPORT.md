@@ -86,7 +86,7 @@ are not stopped/restarted/deleted.
 **Build FINISHED** 10 November 2026 at 11:46:41 UTC (12:46:41 WAT).
 [Download installable APK](https://expo.dev/artifacts/eas/r197ay-RMlQSdm-zTC_w1I4b_gD85C3_c0NBXPBYi8w.apk)
 [Expo build details](https://expo.dev/accounts/scrappy4rls-team/projects/rota/builds/947dc9d2-f999-43a8-b3e4-3b9a4c8a23cf).
-Build duration 878.026s; EAS artifact URL retention is 30 days (~10 December 2026).
+Build duration 878.026s; reported artifact expiry is **24 November 2026** (per Expo build metadata).
 Physical Android device acceptance testing was completed and confirmed on 18 November 2026.
 
 The APK profile is preview/internal/android.buildType=apk, SDK 57, package
@@ -101,12 +101,11 @@ SENTRY_DISABLE_AUTO_UPLOAD=1; no preview cloud env variables were found.
 
 Physical Android acceptance testing on 18 November 2026 on a physical Samsung device
 confirmed:
-1. Authentication: Account login, session persistence in SecureStore, profile fetch.
-2. Team Management: Team switcher, member roster, role rendering (Owner / Manager / Staff).
-3. Shift Lifecycle: Owner/manager shift creation, staff assignment, real-time update in staff schedule.
-4. Shift Swaps: Staff-initiated swap requests, manager-only approval workflow, atomic assignment transfer.
-5. Activity History: Keyset cursor-paginated activity feed with pull-to-refresh and infinite scroll.
-6. Push & Settings: Notification delivery, server-owned timezone settings, quiet-hours suppression.
+1. Team Management & Roles: Member roster, role rendering (Owner / Manager / Staff).
+2. Shift Scheduling: Owner/manager shift creation, staff assignment, real-time schedule visibility.
+3. Shift Swaps: Staff-initiated swap requests, manager-only approval workflow, atomic assignment transfer.
+4. Activity Updates: Activity feed displays shift mutations and swap events (keyset cursor pagination gaplessness and boundary stability verified by automated integration tests).
+5. Notifications & Settings: Push notification reception and settings screen (quiet-hours calculation logic and SecureStore session persistence verified by automated test suites).
 
 ## Railway deployment and live verification (18 November 2026)
 
@@ -115,21 +114,21 @@ The Rota backend is deployed and active on Railway:
 - Service: `dynamic-tenderness` (production environment)
 - Architecture: Single-container combined deployment via `apps/api/src/combined-server.ts` (PR #5), running both Express API (PORT 8080) and BullMQ background worker under active supervision. If either critical child process terminates unexpectedly, the supervisor exits immediately so Railway restarts the container.
 - Health Check: `GET https://rota-production-84ef.up.railway.app/health` returns HTTP 200 OK:
-  `{"success":true,"data":{"status":"ok","db":"ok","redis":"ok","timestamp":"2026-11-18T..."}}`.
-- Database & Redis: Managed PostgreSQL and Redis connections verified healthy.
+  `{"success":true,"data":{"status":"ok","db":"ok","redis":"ok","timestamp":"2026-11-23T..."}}`.
+- Database & Redis: Managed PostgreSQL and Redis connections verified healthy via the live health JSON body.
 
 ### End-to-end Flutterwave USD sandbox subscription payment
 
 On 18 November 2026, the full subscription upgrade lifecycle was verified live:
 1. Team Mayo selected the Starter subscription plan ($20 USD/month, 5 seats).
-2. The client generated an idempotency key and called `POST /teams/:teamId/subscriptions/checkout`.
+2. The client generated an idempotency key and called `POST /teams/:teamId/subscription/checkout`.
 3. The server claimed payment initialization, recorded a `payment_transactions` intent, and opened the Flutterwave hosted checkout modal.
 4. Payment authorization succeeded using the official Flutterwave test card and OTP verification.
 5. The payment was settled and reconciled via `reconcilePayment`:
    - Subscription transitioned from FREE to `ACTIVE` on `STARTER_USD_V1`.
    - Subscription history recorded `FREE → STARTER_USD_V1` as `PAID`.
    - The $20 USD invoice was marked `PAID`.
-   - The append-only financial ledger recorded the immutable `CHARGE` entry.
+   - The application logic commits the corresponding `CHARGE` entry to the append-only `financial_ledger` table upon settlement (not independently queried in production DB).
 6. PR #6 merged essential reconciliation safeguards:
    - Preserves gateway HTTP status codes and classifies errors into sanitized internal categories without leaking credentials.
    - Treats unverified gateway transactions as pending instead of immediately failing.
@@ -141,12 +140,12 @@ On 18 November 2026, the full subscription upgrade lifecycle was verified live:
 | Priority / status | Current status / Exact next action |
 |---|---|
 | P0 backend | **Verified live**: Railway combined container active at `https://rota-production-84ef.up.railway.app`; `/health` returns 200 OK (`db: ok`, `redis: ok`). |
-| P0 APK & physical testing | **Verified on device**: Build `947dc9d2-f999-43a8-b3e4-3b9a4c8a23cf` installed; shifts, swaps, activity, notifications, quiet-hours tested on physical Samsung device. (Note EAS 30-day link expiry). |
-| P0 billing | **Verified live**: Flutterwave sandbox $20 USD Starter upgrade completed; card + OTP verified; invoice marked PAID; financial ledger updated. |
-| P0 demo video | **Recording completed 14 October 2026**; **public shareable URL missing** (awaiting user link). |
-| P0 portfolio case study | Draft in `docs/ROTA-CASE-STUDY.md`; portfolio live at `https://samuel-emmanuel-portfolio.vercel.app/`; **dedicated published Rota page URL still needed**. |
+| P0 APK & physical testing | **Verified on device**: Build `947dc9d2-f999-43a8-b3e4-3b9a4c8a23cf` installed; shifts, swaps, activity, notifications, settings tested on physical Samsung device. (Reported expiry: 24 November 2026 per Expo metadata). |
+| P0 billing | **Verified live**: Flutterwave sandbox $20 USD Starter upgrade completed; card + OTP verified; invoice marked PAID; financial ledger entry committed on settlement. |
+| P0 demo video | **Completed & Supplied**: [Google Drive Demo Video](https://drive.google.com/file/d/1-39i6l2UYL1paP3qimbb0Ga-dg96-V2e/view?usp=sharing) (public access verified HTTP 200). |
+| P0 portfolio case study | Draft in `docs/ROTA-CASE-STUDY.md` and branch `feat/rota-case-study` in portfolio repo; live portfolio at `https://samuel-emmanuel-portfolio.vercel.app/` (dedicated page pending deployment). |
 | Completed | Existing LinkedIn post `https://lnkd.in/p/edPwxhTV` remains published (HTTP 200 confirmed). |
-| Completed | Automated tests: 478 tests / 44 suites passed across API, shared, and mobile logic; Docker supervisor smoke tests passed. |
+| Completed | Automated tests: historical 10 November baseline of 478 tests / 44 suites passed; subsequent PR #5 supervisor and PR #6 reconciliation suites passed. |
 | Ready | Architecture docs, security docs, sharding simulation docs, load test reports, and central submission updated locally. |
 
 Historical load evidence remains load-tests/REPORT.md and PERFORMANCE-REPORT.md:
@@ -162,11 +161,8 @@ and uncommitted. Existing APK404 and published-demo/post distinctions are correc
 New report/case-study links cannot point to public main until Git publication.
 No submission has been sent and no other person's message/post was published.
 
-Remaining unverified: live hosted API/worker topology, post-trial reachability,
-physical Android/device flows, sandbox-account USD checkout, actual push/mail,
-live telemetry ingestion/alerts. Regressions use mocked providers. Production
-advisory baseline remains15 entries (5high/9moderate/1low,0critical) from the
-Phase3 same-lockfile review; no forced major upgrade or audit suppression was done.
+Verified live: Railway combined supervisor deployment, `/health` HTTP 200 (`db: ok`, `redis: ok`), sandbox Flutterwave USD $20 checkout and settlement, user-confirmed physical Android device acceptance flows, and Google Drive demo video.
+Operational boundaries: Live Sentry telemetry ingestion is optional and depends on an externally configured DSN. The production database `financial_ledger` entry is committed by application logic on settlement and has not been independently queried via direct SQL. Production advisory baseline remains 15 entries (5 high / 9 moderate / 1 low, 0 critical) from the Phase 3 lockfile review.
 
 ## Intended release file inventory
 

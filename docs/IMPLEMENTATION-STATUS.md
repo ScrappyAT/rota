@@ -12,16 +12,16 @@ Status categories:
 
 Latest verification: **Live production deployment, Flutterwave sandbox USD verification, and physical Android mobile acceptance, 18 November 2026**.
 Branch `codex/graduation-release-2026-11-10` combines runtime repair, Milestones R1/R2/R3, the combined supervisor (PR #5), and payment reconciliation safeguards (PR #6).
-All 478 tests / 44 suites passed on the integrated tree (136.167s).
+Historical 10 November 2026 integrated-release baseline: 478 tests / 44 suites passed (136.167s); subsequent PR #5 supervisor suite (3 tests) and PR #6 reconciliation suite (14 tests) pass with zero regressions.
 TypeScript, lint (zero errors / one existing shared warning), shared/API builds, and Docker supervisor smoke tests passed.
 Migrations 001–009 are unchanged.
 
 **Confirmed production & device verification (18 November 2026)**:
 - Railway backend (`https://rota-production-84ef.up.railway.app`) is active: `/health` returns HTTP 200 OK (`db: ok`, `redis: ok`).
 - Single-container supervisor (`apps/api/src/combined-server.ts`) runs Express API and BullMQ worker concurrently under active process supervision.
-- Flutterwave sandbox USD subscription payment verified: Team Mayo Starter plan ($20 USD/mo, 5 seats), card + OTP authorization, subscription upgraded to ACTIVE, ledger CHARGE recorded, $20 invoice marked PAID.
-- Physical Android acceptance confirmed on Samsung device: shift creation/assignment, assigned shift visibility, shift swap request/approval, keyset cursor-paginated activity feed, push notifications, and server-owned quiet-hours settings.
-- Installable APK build `947dc9d2-f999-43a8-b3e4-3b9a4c8a23cf` verified (EAS 30-day artifact retention ~10 Dec 2026).
+- Flutterwave sandbox USD subscription payment verified: Team Mayo Starter plan ($20 USD/mo, 5 seats) via `POST /teams/:teamId/subscription/checkout`, card + OTP authorization, subscription upgraded to ACTIVE, $20 invoice marked PAID. Application logic commits corresponding CHARGE entry to `financial_ledger` upon settlement (not independently queried in production DB).
+- User-confirmed physical Android acceptance on Samsung device: shift creation/assignment, assigned shift visibility, shift swap request/approval, activity feed updates, push notifications, and settings screen. Keyset cursor pagination gaplessness, quiet-hours deferral calculations, and session persistence across cold restarts are covered by automated integration test suites.
+- Installable APK build `947dc9d2-f999-43a8-b3e4-3b9a4c8a23cf` verified (reported artifact expiry **24 November 2026** per Expo build metadata).
 
 ## Current graduation integration status
 
@@ -53,10 +53,10 @@ phase did not re-run k6/EXPLAIN or establish hosted production capacity.
 Flutterwave already satisfies the permitted provider choice; no replacement
 is needed. Store production considerations are now documented in README.
 
-Submission: demo recording completed 14 October 2026, shareable URL missing;
-LinkedIn post published; existing APK URL returns 404; portfolio is published
-but a dedicated Rota case-study page remains unverified/missing from supplied
-homepage evidence. See the corrected [submission checklist](SUBMISSION.md).
+Submission: demo video completed and supplied ([Google Drive](https://drive.google.com/file/d/1-39i6l2UYL1paP3qimbb0Ga-dg96-V2e/view?usp=sharing), public access verified);
+LinkedIn post published; installable APK build 947dc9d2 verified (reported expiry 24 Nov 2026);
+case study drafted in docs/ROTA-CASE-STUDY.md and prepared on review branch feat/rota-case-study in portfolio repo.
+See the corrected [submission checklist](SUBMISSION.md).
 
 All four local workstreams need an explicit integration/release review. Phase 3 did not change migration files, billing/auth rules or production records.
 No commit, push, merge or deployment was performed.
@@ -149,7 +149,7 @@ for evidence.
 | Seat capacity enforcement | Completed & verified | Invites and seat edits gated; pending invites consume capacity |
 | Shift-create gate on active subscription | Completed & verified | 403 `SUBSCRIPTION_REQUIRED` when EXPIRED |
 | Checkout / verify / renew / seats endpoints | Completed & verified | Owner-only, Zod-validated; verify idempotent via guarded status claim |
-| Flutterwave client (checkout + verify + webhook) | Completed & verified in Flutterwave sandbox | Verified end-to-end on 18 Nov 2026 ($20 USD Starter upgrade, card auth + OTP, invoice PAID, financial ledger CHARGE) |
+| Flutterwave client (checkout + verify + webhook) | Completed & verified in Flutterwave sandbox | Verified end-to-end on 18 Nov 2026 ($20 USD Starter upgrade via `POST /teams/:teamId/subscription/checkout`, card auth + OTP, invoice PAID; application commits `financial_ledger` entry on settlement) |
 | Webhook receiver with `verif-hash` + `event_key` dedupe | Completed & verified | Duplicate/bad-hash/unknown-ref scenarios covered by tests |
 | Owner-only subscription mobile screens | Completed & verified on physical Android | Plans, checkout launch, and upgrade status verified on device |
 | All-money-integer + envelope + parameterized SQL audit | Completed & verified | No user SQL concat; all errors use `ApiResponse` envelope |
@@ -171,7 +171,7 @@ for evidence.
 | Load testing (k6 harness) | Completed & verified | `load-tests/**` executed via Docker against 10k-row seed; dedicated 200-VU activity feed benchmark before & after caching (see `load-tests/REPORT.md` and `docs/PERFORMANCE-REPORT.md`) |
 | Android development build | Completed & verified | EAS development build running on physical Samsung test device |
 | Deployment packaging (Docker + Railway) | Completed & verified on Railway | Combined supervisor container deployed at https://rota-production-84ef.up.railway.app; /health 200 OK |
-| Demo video | Recording completed (14 Oct 2026) | Recording completed; public shareable URL still needed |
+| Demo video | Completed & verified | Official demo video on Google Drive (https://drive.google.com/file/d/1-39i6l2UYL1paP3qimbb0Ga-dg96-V2e/view?usp=sharing), public access verified HTTP 200 |
 
 ---
 
