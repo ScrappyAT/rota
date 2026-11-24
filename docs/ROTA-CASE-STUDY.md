@@ -1,10 +1,11 @@
 # Rota — Team Shift Scheduling Mobile App with Financial and Operational Integrity
 
-> **Portfolio Case Study**  
+> **Portfolio Case Study**: Published at [samuel-emmanuel-portfolio.vercel.app/projects/rota](https://samuel-emmanuel-portfolio.vercel.app/projects/rota)  
 > **Author**: Samuel Emmanuel  
 > **Repository**: [github.com/ScrappyAT/rota](https://github.com/ScrappyAT/rota)  
 > **Live API**: [rota-production-84ef.up.railway.app](https://rota-production-84ef.up.railway.app/health)  
 > **Android Preview**: [Download APK (Expo Build 947dc9d2)](https://expo.dev/artifacts/eas/r197ay-RMlQSdm-zTC_w1I4b_gD85C3_c0NBXPBYi8w.apk)  
+> **Demo Video**: [Watch on Google Drive](https://drive.google.com/file/d/1-39i6l2UYL1paP3qimbb0Ga-dg96-V2e/view?usp=sharing)  
 > **LinkedIn Post**: [Engineering Write-up](https://lnkd.in/p/edPwxhTV)
 
 ---

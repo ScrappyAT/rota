@@ -230,6 +230,7 @@ The release branch `codex/graduation-release-2026-11-10` is deployed and active 
 - **Physical Android Acceptance**: User-confirmed on physical Samsung device: shift scheduling and assignment, assigned shift visibility, staff swap request and manager approval, activity feed updates, and notifications/settings delivery. (Automated tests cover keyset cursor pagination gaplessness, quiet-hours suppression logic, and cold-restart session persistence).
 - **Automated Tests**: Historical November 10 integrated-release baseline of 478 tests / 44 suites passing; subsequent supervisor and reconciliation test suites reported separately.
 - **Demonstration Video**: [Watch on Google Drive](https://drive.google.com/file/d/1-39i6l2UYL1paP3qimbb0Ga-dg96-V2e/view?usp=sharing) (public access verified HTTP 200).
+- **Portfolio Case Study**: [samuel-emmanuel-portfolio.vercel.app/projects/rota](https://samuel-emmanuel-portfolio.vercel.app/projects/rota) (live case study).
 
 See [release report](docs/GRADUATION-RELEASE-REPORT.md) and [submission checklist](docs/SUBMISSION.md) for full audit records.
 

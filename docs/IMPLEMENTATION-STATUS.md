@@ -55,7 +55,7 @@ is needed. Store production considerations are now documented in README.
 
 Submission: demo video completed and supplied ([Google Drive](https://drive.google.com/file/d/1-39i6l2UYL1paP3qimbb0Ga-dg96-V2e/view?usp=sharing), public access verified);
 LinkedIn post published; installable APK build 947dc9d2 verified (reported expiry 24 Nov 2026);
-case study drafted in docs/ROTA-CASE-STUDY.md and prepared on review branch feat/rota-case-study in portfolio repo.
+case study published at [samuel-emmanuel-portfolio.vercel.app/projects/rota](https://samuel-emmanuel-portfolio.vercel.app/projects/rota) (HTTP 200 confirmed).
 See the corrected [submission checklist](SUBMISSION.md).
 
 All four local workstreams need an explicit integration/release review. Phase 3 did not change migration files, billing/auth rules or production records.
