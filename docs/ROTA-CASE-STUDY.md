@@ -4,7 +4,7 @@
 > **Author**: Samuel Emmanuel  
 > **Repository**: [github.com/ScrappyAT/rota](https://github.com/ScrappyAT/rota)  
 > **Live API**: [rota-production-84ef.up.railway.app](https://rota-production-84ef.up.railway.app/health)  
-> **Android Preview**: [Download APK (Expo Build 947dc9d2)](https://expo.dev/artifacts/eas/r197ay-RMlQSdm-zTC_w1I4b_gD85C3_c0NBXPBYi8w.apk)  
+> **Android Preview**: [Download APK (GitHub Release v1.0.0-graduation)](https://github.com/ScrappyAT/rota/releases/download/v1.0.0-graduation/rota-graduation-v1.0.0.apk) — [Expo Build 947dc9d2 Details](https://expo.dev/accounts/scrappy4rls-team/projects/rota/builds/947dc9d2-f999-43a8-b3e4-3b9a4c8a23cf)  
 > **Demo Video**: [Watch on Google Drive](https://drive.google.com/file/d/1-39i6l2UYL1paP3qimbb0Ga-dg96-V2e/view?usp=sharing)  
 > **LinkedIn Post**: [Engineering Write-up](https://lnkd.in/p/edPwxhTV)
 
