@@ -84,9 +84,9 @@ are not stopped/restarted/deleted.
 ## Android APK
 
 **Build FINISHED** 10 November 2026 at 11:46:41 UTC (12:46:41 WAT).
-[Download installable APK](https://expo.dev/artifacts/eas/r197ay-RMlQSdm-zTC_w1I4b_gD85C3_c0NBXPBYi8w.apk)
+[Download installable APK (GitHub Release v1.0.0-graduation)](https://github.com/ScrappyAT/rota/releases/download/v1.0.0-graduation/rota-graduation-v1.0.0.apk)
 [Expo build details](https://expo.dev/accounts/scrappy4rls-team/projects/rota/builds/947dc9d2-f999-43a8-b3e4-3b9a4c8a23cf).
-Build duration 878.026s; reported artifact expiry is **24 November 2026** (per Expo build metadata).
+Build duration 878.026s; published permanently to GitHub Releases on tag `v1.0.0-graduation` (permanent asset `rota-graduation-v1.0.0.apk`, SHA256 `4b5a559f44191286cbf961b1d92b599c610fb45f7b988dbf871291dfc3aaf7d1`).
 Physical Android device acceptance testing was completed and confirmed on 18 November 2026.
 
 The APK profile is preview/internal/android.buildType=apk, SDK 57, package
@@ -140,7 +140,7 @@ On 18 November 2026, the full subscription upgrade lifecycle was verified live:
 | Priority / status | Current status / Exact next action |
 |---|---|
 | P0 backend | **Verified live**: Railway combined container active at `https://rota-production-84ef.up.railway.app`; `/health` returns 200 OK (`db: ok`, `redis: ok`). |
-| P0 APK & physical testing | **Verified on device**: Build `947dc9d2-f999-43a8-b3e4-3b9a4c8a23cf` installed; shifts, swaps, activity, notifications, settings tested on physical Samsung device. (Reported expiry: 24 November 2026 per Expo metadata). |
+| P0 APK & physical testing | **Verified on device**: Build `947dc9d2-f999-43a8-b3e4-3b9a4c8a23cf` installed; shifts, swaps, activity, notifications, settings tested on physical Samsung device. Published permanently to [GitHub Release v1.0.0-graduation](https://github.com/ScrappyAT/rota/releases/tag/v1.0.0-graduation). |
 | P0 billing | **Verified live**: Flutterwave sandbox $20 USD Starter upgrade completed; card + OTP verified; invoice marked PAID; financial ledger entry committed on settlement. |
 | P0 demo video | **Completed & Supplied**: [Google Drive Demo Video](https://drive.google.com/file/d/1-39i6l2UYL1paP3qimbb0Ga-dg96-V2e/view?usp=sharing) (public access verified HTTP 200). |
 | P0 portfolio case study | **Completed & verified live**: [Published Rota Case Study](https://samuel-emmanuel-portfolio.vercel.app/projects/rota) (HTTP 200 verified). |
@@ -290,7 +290,7 @@ with matching evidence.
 Submission status for final graduation sign-off:
 1. Graduation demo video: Completed and verified live at https://drive.google.com/file/d/1-39i6l2UYL1paP3qimbb0Ga-dg96-V2e/view?usp=sharing (HTTP 200).
 2. Portfolio case study: Completed and verified live at https://samuel-emmanuel-portfolio.vercel.app/projects/rota (HTTP 200).
-3. APK durable hosting recommendation: Reported artifact expiry is 24 November 2026; upload downloaded verified local APK (`rota-graduation-2026-11-10.apk`, SHA256 `4b5a559f44191286cbf961b1d92b599c610fb45f7b988dbf871291dfc3aaf7d1`) to GitHub Releases on `ScrappyAT/rota` for permanent access.
+3. APK permanent hosting: Uploaded verified local APK (`rota-graduation-v1.0.0.apk`, SHA256 `4b5a559f44191286cbf961b1d92b599c610fb45f7b988dbf871291dfc3aaf7d1`) to [GitHub Release v1.0.0-graduation](https://github.com/ScrappyAT/rota/releases/tag/v1.0.0-graduation) for permanent non-expiring access.
 4. Candidate submission: Central graduation form ready for submission.
 
 ## Downloaded APK integrity
@@ -300,4 +300,4 @@ AndroidManifest.xml, classes.dex and 100 native shared libraries.
 SHA256: `4b5a559f44191286cbf961b1d92b599c610fb45f7b988dbf871291dfc3aaf7d1`.
 Local file: `.r1-test-cache/rota-graduation-2026-11-10.apk` (ignored, not committed).
 Physical-device execution on a physical Samsung test phone confirmed on 18 November 2026.
-Expo's signing step used the existing remote keystore. (Reported artifact expiry is **24 November 2026** per Expo build metadata; upload to GitHub Releases recommended for permanent non-expiring access).
+Expo's signing step used the existing remote keystore. (Permanent non-expiring asset hosted at [GitHub Release v1.0.0-graduation](https://github.com/ScrappyAT/rota/releases/download/v1.0.0-graduation/rota-graduation-v1.0.0.apk)).

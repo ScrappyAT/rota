@@ -235,4 +235,4 @@ The release branch `codex/graduation-release-2026-11-10` is deployed and active 
 See [release report](docs/GRADUATION-RELEASE-REPORT.md) and [submission checklist](docs/SUBMISSION.md) for full audit records.
 
 Installable Android APK (SDK 57 preview, build 947dc9d2-f999-43a8-b3e4-3b9a4c8a23cf):
-[Download APK](https://expo.dev/artifacts/eas/r197ay-RMlQSdm-zTC_w1I4b_gD85C3_c0NBXPBYi8w.apk) (Reported artifact expiry **24 November 2026** per Expo build metadata). Physical-device execution confirmed.
+[Download Android APK (GitHub Release v1.0.0-graduation)](https://github.com/ScrappyAT/rota/releases/download/v1.0.0-graduation/rota-graduation-v1.0.0.apk) — [Expo build details](https://expo.dev/accounts/scrappy4rls-team/projects/rota/builds/947dc9d2-f999-43a8-b3e4-3b9a4c8a23cf). Physical-device execution confirmed. SHA256: `4b5a559f44191286cbf961b1d92b599c610fb45f7b988dbf871291dfc3aaf7d1`.
